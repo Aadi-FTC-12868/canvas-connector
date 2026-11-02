@@ -26,6 +26,7 @@ from ._config import CanvasConfig, load_config
 from ._errors import CanvasError
 from ._http import CanvasHTTP
 from ._module_item_read import read_module_item_raw
+from ._page_read import PageMetadataRequest, read_page_raw
 from .endpoints.activity import GetActivityStreamSummary, ListActivityStream
 from .endpoints.announcements import ListAnnouncements
 from .endpoints.assignments import GetAssignment, ListAssignments
@@ -61,7 +62,7 @@ from .endpoints.files import (
     ListUserFolders,
 )
 from .endpoints.modules import GetModuleItems, GetModuleItemSequence, ListModules
-from .endpoints.navigation import GetCourseTabs, GetFrontPage, GetPage, GetQuiz, ListPages, ListQuizzes
+from .endpoints.navigation import GetCourseTabs, GetQuiz, ListQuizzes
 from .endpoints.submissions import (
     AddSubmissionComment,
     GetSubmission,
@@ -265,13 +266,13 @@ class _PagesAPI:
         self._http = http
 
     def list(self, course_id: int) -> list[dict[str, Any]]:
-        return self._http.exhaust(ListPages(course_id))
+        return self._http.exhaust(PageMetadataRequest(f"courses/{course_id}"))
 
     def get(self, course_id: int, page_url: str) -> dict[str, Any]:
-        return self._http.send(GetPage(course_id, page_url))
+        return read_page_raw(self._http, "course", course_id, page_url)
 
     def front_page(self, course_id: int) -> dict[str, Any]:
-        return self._http.send(GetFrontPage(course_id))
+        return read_page_raw(self._http, "course", course_id)
 
 
 class _QuizzesAPI:

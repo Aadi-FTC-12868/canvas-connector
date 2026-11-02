@@ -19,6 +19,15 @@ def make_canvas(handler):
                   http_client=httpx.Client(transport=httpx.MockTransport(handler)))
 
 
+def page_metadata(url="intro", page_id=4, front_page=False):
+    return {"page_id": page_id, "url": url, "title": url.title(), "front_page": front_page,
+            "published": True, "locked_for_user": False, "updated_at": "2026-01-01T00:00:00Z"}
+
+
+def page_revision(metadata, body):
+    return {**metadata, "body": body, "revision_id": 1, "latest": True}
+
+
 def test_link_only_file_remains_readable_and_routes_to_document_reader():
     with make_canvas(lambda request: httpx.Response(200, json={
         "id": 12, "display_name": "linked.pdf", "hidden_for_user": True,
@@ -87,12 +96,14 @@ def test_dashboard_home_page_item_and_links_follow_typed_navigation():
         if path == "/api/v1/courses":
             return httpx.Response(200, json=[{"id": 1, "name": "Demo"}])
         if path == "/api/v1/courses/1":
-            assert "syllabus_body" in request.url.params.get_list("include[]")
+            assert "syllabus_body" in request.url.params.get_list("include[]") or request.url.params.get_list("include[]") == ["horizon_course"]
             return httpx.Response(200, json={"id": 1, "name": "Demo", "default_view": "wiki"})
         if path.endswith("/tabs"):
             return httpx.Response(200, json=[{"id": "modules", "position": 2}, {"id": "home", "position": 3}, {"id": "files", "hidden": True}])
-        if path.endswith("/front_page"):
-            return httpx.Response(200, json={"page_id": 5, "url": "welcome", "body": '<a href="/courses/1/assignments/7">Read</a><img src="/files/3/preview"><a href="https://external.example/tool">Tool</a>'})
+        if path.endswith("/pages"):
+            return httpx.Response(200, json=[page_metadata("welcome", 5, True)])
+        if path.endswith("/revisions/latest"):
+            return httpx.Response(200, json=page_revision(page_metadata("welcome", 5, True), '<a href="/courses/1/assignments/7">Read</a><img src="/files/3/preview"><a href="https://external.example/tool">Tool</a>'))
         if path.endswith("/assignments/7"):
             return httpx.Response(200, json={"id": 7, "name": "Read", "description": "The assignment"})
         raise AssertionError(path)
@@ -109,16 +120,23 @@ def test_dashboard_home_page_item_and_links_follow_typed_navigation():
     assert nav.open_url(links[0]["url"])["data"]["name"] == "Read"
 
 
-def test_front_page_url_uses_front_page_endpoint():
+def test_front_page_url_uses_metadata_and_latest_revision():
     calls = []
 
     def handler(request):
         calls.append(request.url.path)
-        return httpx.Response(200, json={"url": "welcome", "body": "Hello"})
+        if request.url.path.endswith("/courses/1"):
+            return httpx.Response(200, json={"id": 1})
+        if request.url.path.endswith("/pages"):
+            return httpx.Response(200, json=[page_metadata("welcome", 5, True)])
+        assert request.url.path.endswith("/pages/page_id:5/revisions/latest")
+        return httpx.Response(200, json=page_revision(page_metadata("welcome", 5, True), "Hello"))
 
     nav = make_canvas(handler).navigation
     assert nav.open_url("/courses/1/pages/front_page")["data"]["body"] == "Hello"
-    assert calls == ["/api/v1/courses/1/front_page"]
+    assert calls == ["/api/v1/courses/1", "/api/v1/courses/1/pages",
+                     "/api/v1/courses/1/pages/page_id:5/revisions/latest",
+                     "/api/v1/courses/1/pages", "/api/v1/courses/1"]
 
 
 @pytest.mark.parametrize("url,status", [
@@ -160,8 +178,12 @@ def test_module_item_reads_target_and_sequence_never_marks_read():
         calls.append(request.url.path)
         if request.url.path.endswith("/items"):
             return httpx.Response(200, json=[{"id": 101, "module_id": 10, "type": "Page", "page_url": "intro", "content_details": {"locked_for_user": False}}])
-        if request.url.path.endswith("/pages/intro"):
-            return httpx.Response(200, json={"page_id": 4, "url": "intro", "body": "Intro"})
+        if request.url.path.endswith("/courses/1"):
+            return httpx.Response(200, json={"id": 1})
+        if request.url.path.endswith("/pages"):
+            return httpx.Response(200, json=[page_metadata()])
+        if request.url.path.endswith("/revisions/latest"):
+            return httpx.Response(200, json=page_revision(page_metadata(), "Intro"))
         assert request.url.params["asset_type"] == "ModuleItem"
         return httpx.Response(200, json={"items": [{"prev": {"id": 100}, "current": {"id": 101}, "next": {"id": 103}}]})
 
@@ -170,7 +192,7 @@ def test_module_item_reads_target_and_sequence_never_marks_read():
     assert opened["data"]["content"]["data"]["body"] == "Intro"
     sequence = nav.module_sequence(1, "ModuleItem", "101")
     assert sequence["data"]["items"][0]["next"]["id"] == 103
-    assert len(calls) == 3
+    assert len(calls) == 7
 
 
 def test_files_forbidden_is_not_empty_and_has_modules_alternative():
@@ -284,7 +306,12 @@ def test_module_item_composition_cannot_extend_nested_page_ttl(monkeypatch):
         calls[request.url.path] += 1
         if request.url.path.endswith("/items"):
             return httpx.Response(200, json=[{"id": 101, "module_id": 10, "type": "Page", "page_url": "intro"}])
-        return httpx.Response(200, json={"page_id": 4, "url": "intro", "body": f"Version {calls[request.url.path]}"})
+        if request.url.path.endswith("/courses/1"):
+            return httpx.Response(200, json={"id": 1})
+        if request.url.path.endswith("/pages"):
+            return httpx.Response(200, json=[page_metadata()])
+        assert request.url.path.endswith("/revisions/latest")
+        return httpx.Response(200, json=page_revision(page_metadata(), f"Version {calls[request.url.path]}"))
 
     nav = make_canvas(handler).navigation
     nav.open_item(1, "page", "intro")
@@ -296,7 +323,7 @@ def test_module_item_composition_cannot_extend_nested_page_ttl(monkeypatch):
     assert second["source"]["cache_policy"] == "composed_response_not_cached"
     assert second["data"]["content"]["source"]["cache_hit"] is False
     assert second["data"]["content"]["data"]["body"] == "Version 2"
-    assert calls["/api/v1/courses/1/pages/intro"] == 2
+    assert calls["/api/v1/courses/1/pages/page_id:4/revisions/latest"] == 2
 
 
 def test_home_composition_cannot_extend_front_page_ttl(monkeypatch):
@@ -308,8 +335,10 @@ def test_home_composition_cannot_extend_front_page_ttl(monkeypatch):
         calls[request.url.path] += 1
         if request.url.path.endswith("/tabs"):
             return httpx.Response(200, json=[])
-        if request.url.path.endswith("/front_page"):
-            return httpx.Response(200, json={"url": "welcome", "body": f"Version {calls[request.url.path]}"})
+        if request.url.path.endswith("/pages"):
+            return httpx.Response(200, json=[page_metadata("welcome", 5, True)])
+        if request.url.path.endswith("/revisions/latest"):
+            return httpx.Response(200, json=page_revision(page_metadata("welcome", 5, True), f"Version {calls[request.url.path]}"))
         return httpx.Response(200, json={"id": 1, "default_view": "wiki"})
 
     nav = make_canvas(handler).navigation

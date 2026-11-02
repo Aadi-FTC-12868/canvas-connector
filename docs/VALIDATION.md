@@ -1,6 +1,6 @@
 # Validation record
 
-Development release 0.8.0, validated November 2, 2026 UTC.
+Development release 0.8.1, validated November 2, 2026 UTC.
 Historical installation, container and benchmark evidence below is identified by release; those checks are not implied to have been repeated for every new capability.
 These checks do not establish complete Canvas app parity or a production service.
 
@@ -14,10 +14,10 @@ These checks do not establish complete Canvas app parity or a production service
   discovery metadata, with or without a trailing slash in operator configuration.
   Endpoint construction and CSRF origin checks remain separately verified.
 
-- Python 3.12 local check for 0.8.0: **2,383 tests passed; 13 PostgreSQL
+- Python 3.12 local check for 0.8.1: **2,511 tests passed; 13 PostgreSQL
   tests skipped** without a local PostgreSQL instance. New coverage includes
   Mastery Paths, self group membership, discussion attachment bytes, feedback
-  markers and Horizon read safety. Version 0.7.0 Linux CI passed 1,889 tests,
+  markers, passive page reads and Horizon read safety. Version 0.8.0 Linux CI passed 2,394 tests,
   including all 13 PostgreSQL cases, with two native OCR cases skipped; both
   OCR tests passed locally. Two upstream warnings remain: Starlette's test-client
   httpx deprecation and MCP/Pydantic's settings forward reference.
@@ -31,6 +31,14 @@ These checks do not establish complete Canvas app parity or a production service
   redirects or ambiguous Link headers. Missing records are distinguished from
   incomplete/denied discovery. Old raw snapshots and persisted done/undo/read
   receipts remain compatible; ignored writes cannot be falsely verified by a GET.
+- Page-read regressions cover course home, direct pages, module-linked pages,
+  course/group URL routes and group membership. They model SHOW and body-list
+  progress side effects and verify those requests are never dispatched. Latest
+  saved HTML requires exact metadata, matching revision and fresh locks/access;
+  nested results retain partial coverage. Pagination rejects body includes,
+  changed ordering/page size, skipped pages and redirects before dispatch.
+  Horizon/block content, denied metadata, null body and stale revision return
+  unavailable; imported pages may legitimately omit author identity.
 - Mastery Path checks bind exact offered assignment sets/associations to the own
   student, perform one selection and independently verify it. Assignment release
   can remain incomplete; coursework completion is not inferred. Membership checks
@@ -104,9 +112,9 @@ These checks do not establish complete Canvas app parity or a production service
   copies successfully with 42 tools, 27 actions, and 11 permission groups.
   Clean extracted packages also bootstrapped
   their bundled Python packages and ran a real MCP session.
-- A clean extracted 0.8.0 MCPB installed its bundled packages through UV and
+- A clean extracted 0.8.1 MCPB installed its bundled packages through UV and
   launched a real stdio session with all 71 tools, 69 actions and 24 execution
-  groups, using synthetic credentials, an isolated Python 3.12 install/cache and temporary storage. The cold launch installed 37 dependencies and completed protocol validation in 8.21 seconds; a network guard recorded zero Canvas requests. This
+  groups, using synthetic credentials, an isolated Python 3.12 install/cache and temporary storage. The cold launch installed 37 dependencies and completed protocol validation in 7.31 seconds; a network guard recorded zero Canvas requests. This
   validates the packaged runtime, separately from native client installation.
 - Source releases use an allowlist, SHA-256 manifests, safe archive paths, and a
   private-path/school-marker scan. A known private-token scan found zero matches
@@ -121,7 +129,7 @@ These checks do not establish complete Canvas app parity or a production service
   plugin archives, and Docker image.
 
 - The public [source repository](https://github.com/Aadi-FTC-12868/canvas-connector)
-  has its MIT license, tracked source history, and [passing 0.7.0 Linux CI](https://github.com/Aadi-FTC-12868/canvas-connector/actions/runs/41395764295).
+  has its MIT license, tracked source history, and [passing 0.8.0 Linux CI](https://github.com/Aadi-FTC-12868/canvas-connector/actions/runs/41398653457).
   The website serves the reviewed source and install packages.
 - A reproducible [synthetic workload](BENCHMARKS.md) checked 1,000 authenticated
   profile requests across 64 accounts with one and two SQLite workers. Both runs

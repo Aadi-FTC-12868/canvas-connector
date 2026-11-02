@@ -31,7 +31,8 @@ class MockCanvas:
                       "published": True, "locked_for_user": False, "user_can_see_posts": True,
                       "require_initial_post": False, "read_state": "unread", "assignment_id": None,
                       "is_announcement": False}
-        self.page = {"page_id": 20, "url": "study-guide", "body": "<p>Guide</p>", "locked_for_user": False}
+        self.page = {"page_id": 20, "url": "study-guide", "title": "Study guide", "body": "<p>Guide</p>",
+                     "locked_for_user": False, "published": True, "updated_at": "2026-01-01T00:00:00Z"}
         self.file = {"id": 30, "folder_id": 40, "display_name": "guide.pdf", "locked_for_user": False}
         self.folder = {"id": 40, "name": "Group files", "context_type": "Group", "context_id": 2}
         self.rows = [{"id": i, "message": f"Entry {i}", "read_state": "unread"} for i in range(50, 56)]
@@ -85,8 +86,11 @@ class MockCanvas:
             body = self.permissions
         elif path in {"groups/2/discussion_topics/10", "courses/1/discussion_topics/10"}:
             body = self.topic
-        elif path in {"groups/2/pages/study-guide", "groups/2/pages/page_id:20", "groups/2/pages/20"}:
-            body = self.page
+        elif path == "groups/2/pages/page_id:20/revisions/latest":
+            body = {key: self.page[key] for key in ("url", "title", "body", "updated_at")}
+            body.update(revision_id=1, latest=True)
+        elif path == "groups/2/pages" and request.url.params.get("per_page") == "100":
+            body = [{key: value for key, value in self.page.items() if key != "body"}]
         elif path == "groups/2/files/30":
             body = self.file
         elif path == "groups/2/folders/40":
@@ -256,11 +260,10 @@ def test_invalid_window_has_no_network_requests(upstream, offset, limit):
 
 
 @pytest.mark.parametrize("slug", ["study-guide", "20", "page_id:20"])
-def test_group_page_has_exact_identity_and_preserves_lock_fields(upstream, slug):
+def test_group_page_has_exact_identity_and_refuses_locked_content(upstream, slug):
     upstream.page.update(locked_for_user=True, lock_explanation="Locked until tomorrow")
-    result = content.get_group_page(upstream.canvas, 2, slug)
-    assert result["page_id"] == 20 and result["locked_for_user"] is True
-    assert result["lock_explanation"] == "Locked until tomorrow"
+    with pytest.raises(CanvasError, match="locked"):
+        content.get_group_page(upstream.canvas, 2, slug)
     assert not upstream.writes
 
 

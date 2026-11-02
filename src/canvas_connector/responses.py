@@ -12,6 +12,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qsl, urlencode
 
 from bs4 import BeautifulSoup
 from canvas_py._errors import CanvasError
+from canvas_py._page_read import PageContentUnavailable
 
 _PRIVATE_QUERY = {"verifier", "access_token", "token", "signature", "sig", "key"}
 _DECORATIVE = {"avatar_url", "avatar_image_url", "image_download_url"}
@@ -131,6 +132,7 @@ def envelope(value: Any = None, *, origin: str = "", status: str = "ok",
     def incomplete(node: Any) -> bool:
         if isinstance(node, dict):
             return ((node.get("next_offset") is not None) or bool(node.get("next_read"))
+                    or node.get("content_complete") is False
                     or node.get("status") in {"forbidden", "unavailable", "locked", "external", "not_found_or_disabled"}
                     or any(incomplete(v) for v in node.values()))
         return isinstance(node, list) and any(incomplete(v) for v in node)
@@ -148,7 +150,10 @@ def failure(error: Exception, *, origin: str = "") -> dict[str, Any]:
     if isinstance(error, CanvasError):
         code = error.status
         status = {401: "unauthorized", 403: "forbidden", 404: "not_found", 429: "rate_limited"}.get(code, "unavailable")
-        message = "Canvas did not provide this resource. This does not mean it is empty or completed."
+        # This subtype is created only from fixed local messages, never upstream
+        # response text. Keep its actionable handoff without exposing API errors.
+        message = (str(error) + ". Open this page in Canvas." if isinstance(error, PageContentUnavailable)
+                   else "Canvas did not provide this resource. This does not mean it is empty or completed.")
     else:
         code, status, message = None, "invalid_request", str(error)
     return envelope(origin=origin, status=status, coverage={"complete": False},

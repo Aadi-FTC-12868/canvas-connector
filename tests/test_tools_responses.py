@@ -6,9 +6,10 @@ from unittest.mock import Mock
 import pytest
 from canvas_py._config import CanvasConfig
 from canvas_py._errors import CanvasError
+from canvas_py._page_read import PageContentUnavailable
 from mcp.server.fastmcp import FastMCP
 
-from canvas_connector.responses import ResponseStore, envelope, normalize
+from canvas_connector.responses import ResponseStore, envelope, failure, normalize
 from canvas_connector.tools import register_tools
 
 
@@ -102,6 +103,16 @@ def test_forbidden_is_not_empty_success_and_error_does_not_leak_body():
     assert "secret" not in json.dumps(result) and "private" not in json.dumps(result)
 
 
+def test_saved_page_unavailability_keeps_local_reason_without_upstream_body():
+    result = failure(PageContentUnavailable("This page editor requires the Canvas browser",
+        body="private upstream HTML"))
+    assert result["status"] == "unavailable"
+    assert result["coverage"]["complete"] is False
+    assert "This page editor requires the Canvas browser" in result["errors"][0]["message"]
+    assert "Open this page in Canvas" in result["errors"][0]["message"]
+    assert "private" not in json.dumps(result)
+
+
 def test_inbox_read_never_marks_read():
     c, _, fns = server()
     c.inbox.get.return_value = {"id": 3, "workflow_state": "unread", "messages": []}
@@ -128,3 +139,16 @@ def test_permission_groups_cannot_execute_another_action_kind():
         assert result["status"] == "invalid_request"
     c.files.upload.assert_not_called()
     assert fns["canvas_action_status"](receipt["action_id"])["data"]["state"] == "prepared"
+
+
+@pytest.mark.parametrize("wrap", [lambda page: page, lambda page: {"content": {"data": page}},
+    lambda page: {"home": {"status": "ok", "data": page}},
+    lambda page: {"status": "ok", "source": {"cache_hit": False}, "data": {"content": page}}])
+def test_saved_page_html_remains_partial_through_nested_envelopes(wrap):
+    page = {"page_id": 4, "body": "<p>Saved instructions.</p>",
+            "content_source": "latest_saved_html_revision", "content_complete": False,
+            "content_warning": "Current Canvas rendering may include other content."}
+    result = envelope(wrap(page), coverage={"complete": True, "scope": "requested_resource"})
+    assert result["coverage"]["complete"] is False
+    assert "Saved instructions." in json.dumps(result["data"])
+    assert "latest_saved_html_revision" in json.dumps(result["data"])

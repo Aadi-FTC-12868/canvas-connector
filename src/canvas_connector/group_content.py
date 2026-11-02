@@ -8,10 +8,14 @@ from __future__ import annotations
 
 from itertools import islice
 from typing import Annotated, Any, Literal
-from urllib.parse import quote
 
 from canvas_py import Canvas
 from canvas_py._errors import CanvasError
+from canvas_py._page_read import (
+    PageMetadataRequest,
+    read_page_raw,
+    validate_page_selector,
+)
 from canvas_py._request import CanvasRequest
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
@@ -131,7 +135,9 @@ def get_group(canvas: Canvas, group_id: int) -> dict:
 def _page(canvas: Canvas, path: str, offset: int, limit: int, *, query: list | None = None,
           file_metadata: bool = False) -> dict:
     window([], offset, limit)
-    iterator = canvas.paginate(_ListRequest(path, query=[*(query or []), ("per_page", limit)]))
+    request = (PageMetadataRequest(path.removesuffix("/pages"), per_page=limit) if path.endswith("/pages") else
+               _ListRequest(path, query=[*(query or []), ("per_page", limit)]))
+    iterator = canvas.paginate(request)
     try:
         rows = list(islice(iterator, offset, offset + limit + 1))
     finally:
@@ -175,24 +181,11 @@ def list_group_pages(canvas: Canvas, group_id: int, offset: int = 0, limit: int 
 
 
 def get_group_page(canvas: Canvas, group_id: int, page_url: str) -> dict:
-    """Read a slug/ID (page_id:123 is unambiguous); preserve lock metadata."""
-    if (type(page_url) is not str or not 1 <= len(page_url) <= 255 or page_url in {".", ".."}
-            or any(c in page_url for c in "/\\%?#") or any(ord(c) < 32 for c in page_url)):
-        raise ValueError("page_url must be one Canvas page slug or ID")
-    explicit_id = None
-    if page_url.startswith("page_id:"):
-        tail = page_url.removeprefix("page_id:")
-        if not tail.isascii() or not tail.isdigit():
-            raise ValueError("page_id: requires a positive numeric page ID")
-        explicit_id = _ID.validate_python(int(tail))
-    _group_access(canvas, group_id)
-    page = _object(canvas, f"groups/{group_id}/pages/{quote(page_url, safe='')}")
-    if explicit_id is not None:
-        _identity(page, "page_id", explicit_id)
-    elif page.get("url") != page_url:
-        if not page_url.isascii() or not page_url.isdigit():
-            raise ValueError("Canvas returned a different page")
-        _identity(page, "page_id", int(page_url))
+    """Read access-checked saved HTML without recording module progress."""
+    validate_page_selector(page_url)
+    access = _group_access(canvas, group_id)
+    page = read_page_raw(canvas, "group", group_id, page_url)
+    _group_access(canvas, group_id, actor=access["user_id"])
     return page
 
 

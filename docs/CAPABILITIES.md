@@ -9,7 +9,7 @@ For the full student-workflow acceptance ledger and remaining gaps, see [APP-PAR
 | Student workflow | Connector behavior | Important boundary |
 | --- | --- | --- |
 | Course overview | Dashboard, course home, tabs, and course sections | A hidden tab or failed endpoint does not prove the course has no content. |
-| Modules and pages | Follow module items, pages, and returned previous/next relationships | Prerequisites, lock dates, and user permissions still apply. Exact item reads use bounded collection lookup to avoid Horizon SHOW marking progress. |
+| Modules and pages | Follow module items, pages, and returned previous/next relationships | Prerequisites, lock dates, and user permissions still apply. Exact item reads use bounded collection lookup to avoid Horizon SHOW marking progress. Page bodies use access-checked latest saved HTML, explicitly partial; unsupported rendering or access requires Canvas. |
 | Assignments | Read assignment details, allowed submission types, dates, attachments, and links | The description can be only one part of the instructions. Follow linked material. |
 | Grades and feedback | Read the student's submission status, score/grade, comments, and returned rubric data | A previous grade may not describe the latest attempt. This is not an instructor gradebook editor. |
 | Syllabus and course policies | Follow the syllabus and ordinary course content relationships | Materials may be placed in modules, files, pages, or external services rather than a tab named Syllabus. |
@@ -25,6 +25,8 @@ For the full student-workflow acceptance ledger and remaining gaps, see [APP-PAR
 | Group membership options | Discover visible course groups and exact self-membership options | Invitation response, leadership changes and exclusive-category switches can require Canvas. |
 | Feedback markers | Read own submission, rubric and annotation markers without changing them | General submission state uses one fixed GraphQL read query; this needs a broader optional upstream scope. |
 | Preferences | Read existing notification channels/frequencies, favorites, nicknames and colors | Delivery infrastructure, channel creation and card ordering remain separate. |
+
+Page reads, including course home and module-linked pages, avoid page SHOW and body-including lists because those reads can mark module progress. Metadata-only listing and latest saved HTML are matched and rechecked for identity, publication, locks and revision freshness. `content_source=latest_saved_html_revision`, `content_complete=false` and the warning survive nested tool results. Known Horizon/block content, unavailable Pages listing, missing revisions or unknown access produce an unavailable result and Canvas handoff. An empty saved HTML string is not proof that Canvas displays an empty page.
 
 ## Documents and external links
 

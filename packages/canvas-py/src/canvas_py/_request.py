@@ -60,6 +60,13 @@ class CanvasRequest(Generic[Response]):
         """
         return []
 
+    def validate_pagination_query(self, pairs: list[tuple[str, str]], *, page_number: int) -> None:
+        """Optional query guard before each paginated dispatch.
+
+        Some GET includes have side effects. Such endpoints must reject
+        unsafe Link query changes before any request is sent.
+        """
+
     def json_body(self) -> dict[str, Any] | None:
         """JSON body for POST/PUT/PATCH. Return None for GET/DELETE."""
         return None

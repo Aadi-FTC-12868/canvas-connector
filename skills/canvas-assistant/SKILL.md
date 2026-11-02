@@ -13,6 +13,8 @@ Start with the dashboard and course home, then follow returned sections, module 
 
 A syllabus may be a page, assignment attachment, module file, announcement, or external document. Its navigation label alone does not identify the complete source. Search the relationships in the course before concluding that material is absent. An inaccessible or failed source is not an empty source.
 
+A page with `content_source=latest_saved_html_revision` is only the saved HTML representation. Preserve `content_complete=false`, coverage and content warnings; Canvas may render additional block or external material. Empty saved HTML does not prove an empty current page. If access, locks or supported rendering cannot be verified, use the returned Canvas handoff. Reading a page does not authorize marking its module requirement viewed.
+
 For group material, discover the user's groups and use the group home, browsing, item and discussion-entry tools. Course routes do not substitute for group routes. Preserve membership restrictions, initial-post gates and locked content. A topic being closed for replies does not necessarily prevent reading it.
 
 Use the document-reading tool for PDF, DOCX, and other supported file text. Follow continuation cursors when the answer requires the rest of a document. Disclose extraction or OCR gaps that affect the answer. Cite the returned Canvas source links.

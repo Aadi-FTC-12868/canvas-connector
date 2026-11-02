@@ -40,6 +40,11 @@ def test_locked_group_item_is_not_reported_as_complete(boundary, item_type, item
     upstream, _, call, _, authorize = boundary
     getattr(upstream, resource).update(locked_for_user=True, lock_explanation="Opens after class")
     result = call["canvas_open_group_item"](2, item_type, item_id)
+    if item_type == "page":
+        assert result["status"] == "unavailable" and result["coverage"]["complete"] is False
+        assert "body" not in json.dumps(result)
+        assert not upstream.writes
+        return
     assert result["status"] == "locked" and result["coverage"]["complete"] is False
     assert result["data"]["locked_for_user"] is True
     assert result["data"]["lock_explanation"] == "Opens after class"

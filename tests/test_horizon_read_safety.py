@@ -87,8 +87,14 @@ class HorizonState:
             return httpx.Response(200, json=[{**self.module, "items": [self.item], "items_count": 1}])
         if path == "/api/v1/users/self/profile":
             return httpx.Response(200, json={"id": 7})
-        if path == "/api/v1/courses/1/pages/reading":
-            return httpx.Response(200, json={"page_id": 4, "url": "reading", "body": "Synthetic reading"})
+        if path == "/api/v1/courses/1":
+            return httpx.Response(200, json={"id": 1, "horizon_course": False})
+        page = {"page_id": 4, "url": "reading", "title": "Reading", "published": True,
+                "locked_for_user": False, "updated_at": "2026-01-01T00:00:00Z"}
+        if path == "/api/v1/courses/1/pages":
+            return httpx.Response(200, json=[page])
+        if path == "/api/v1/courses/1/pages/page_id:4/revisions/latest":
+            return httpx.Response(200, json={**page, "revision_id": 1, "latest": True, "body": "Synthetic reading"})
         raise AssertionError((method, path))
 
 

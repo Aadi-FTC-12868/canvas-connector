@@ -18,8 +18,7 @@ url:GET|/api/v1/courses/:course_id/modules/:id
 url:GET|/api/v1/courses/:course_id/modules/:module_id/items
 url:GET|/api/v1/courses/:course_id/module_item_sequence
 url:GET|/api/v1/courses/:course_id/pages
-url:GET|/api/v1/courses/:course_id/pages/:url_or_id
-url:GET|/api/v1/courses/:course_id/front_page
+url:GET|/api/v1/courses/:course_id/pages/:url_or_id/revisions/latest
 url:GET|/api/v1/courses/:course_id/quizzes
 url:GET|/api/v1/courses/:course_id/quizzes/:id
 ```
@@ -27,6 +26,8 @@ url:GET|/api/v1/courses/:course_id/quizzes/:id
 Sources: [users](https://developerdocs.instructure.com/services/canvas/resources/users), [courses](https://developerdocs.instructure.com/services/canvas/resources/courses), [tabs](https://developerdocs.instructure.com/services/canvas/resources/tabs), [modules](https://developerdocs.instructure.com/services/canvas/resources/modules), [pages](https://developerdocs.instructure.com/services/canvas/resources/pages), [quiz metadata](https://developerdocs.instructure.com/services/canvas/resources/quizzes).
 
 Exact module-item reads use the collection route with a 1,000-record bound. The adapter avoids single-item SHOW because Canvas Horizon can record progress during that GET. Collection redirects and pagination links to a different path are refused before dispatch. Explicit progress writes retain their separate scopes below.
+
+Page reads use metadata-only collection requests and the literal `revisions/latest` route, with fresh access/lock checks before and after fetching saved HTML. Page SHOW, front-page SHOW, body-including lists and historical revision routes are not used by the adapter. These ordinary SHOW/body-list reads can mark module progress in Canvas; explicit progress marking remains separate. Pages-tab denial or unsupported content returns a handoff rather than an unsafe fallback. Latest saved HTML carries `content_complete=false` because it may not include additional block/external rendering. See the [page serializer](https://github.com/instructure/canvas-lms/blob/master/lib/api/v1/wiki_page.rb) and [controller](https://github.com/instructure/canvas-lms/blob/master/app/controllers/wiki_pages_api_controller.rb).
 
 ## Assignments, discussions, communication, and planning reads
 
@@ -182,7 +183,7 @@ url:GET|/api/v1/groups/:group_id
 url:GET|/api/v1/groups/:group_id/users/:user_id
 url:GET|/api/v1/groups/:group_id/users
 url:GET|/api/v1/groups/:group_id/pages
-url:GET|/api/v1/groups/:group_id/pages/:url_or_id
+url:GET|/api/v1/groups/:group_id/pages/:url_or_id/revisions/latest
 url:GET|/api/v1/groups/:group_id/discussion_topics
 url:GET|/api/v1/groups/:group_id/discussion_topics/:topic_id
 url:GET|/api/v1/groups/:group_id/discussion_topics/:topic_id/entries

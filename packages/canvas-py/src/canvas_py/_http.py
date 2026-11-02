@@ -137,6 +137,7 @@ class CanvasHTTP:
                 collection_path = current_url.raw_path.split(b"?", 1)[0]
             if request.pin_pagination_path and current_url.raw_path.split(b"?", 1)[0] != collection_path:
                 raise CanvasError("pagination left the requested Canvas collection path")
+            request.validate_pagination_query(current_url.params.multi_items(), page_number=page_count + 1)
             current = str(current_url)
             if current in seen:
                 raise CanvasError("pagination loop detected")

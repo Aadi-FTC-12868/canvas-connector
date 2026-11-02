@@ -20,6 +20,7 @@ from urllib.parse import unquote, urljoin, urlsplit
 from bs4 import BeautifulSoup
 
 from ._errors import CanvasAuthError, CanvasError
+from ._page_read import PageContentUnavailable
 
 if TYPE_CHECKING:
     from ._client import Canvas
@@ -132,8 +133,10 @@ class CanvasNavigation:
         except CanvasError as error:
             # Never relabel a failed read as an empty course or cached success.
             status = {403: "forbidden", 404: "not_found_or_disabled"}.get(error.status, "unavailable")
+            message = (f"{error} Use the Canvas page link." if isinstance(error, PageContentUnavailable) else
+                       "Canvas did not provide this resource. Retry with refresh or open its Canvas link.")
             return {"status": status, "http_status": error.status,
-                    "message": "Canvas did not provide this resource. Retry with refresh or open its Canvas link.",
+                    "message": message,
                     "source": {"canvas_origin": self.base_url, "cache_hit": False,
                                "attempted_at": datetime.now(UTC).isoformat()}}
 
