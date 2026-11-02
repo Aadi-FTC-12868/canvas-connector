@@ -1,10 +1,10 @@
 # Canvas developer-key scope manifest
 
-This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, `module_progress.py`, `personal_files.py`, `preferences.py`, `group_content.py`, `enrollments.py`, `bookmarks.py`, and `what_if_grades.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
+This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, `module_progress.py`, `personal_files.py`, `preferences.py`, `group_content.py`, `enrollments.py`, `bookmarks.py`, `what_if_grades.py`, `mastery_paths.py`, `group_memberships.py`, `discussion_attachments.py`, and `feedback.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
 
 Canvas developer-key scopes use the exact route-template spelling below. For example, an API call containing `self` can correspond to a scope containing `:user_id`; keep Canvas's documented placeholder names rather than substituting real IDs. These upstream scopes are separate from this connector's `canvas:read` and `canvas:write` grants. An institutional administrator enables the upstream scopes. See [Canvas developer-key configuration](https://developerdocs.instructure.com/services/canvas/oauth2/file.developer_keys).
 
-The current hosted authorization request does not send a narrower upstream `scope` parameter; it inherits the configured developer key's allowed scope set. The connector separately enforces its read/write grant. For an institution that wants upstream read-only credentials, configure a developer key with only the applicable read scopes below.
+The current hosted authorization request does not send a narrower upstream `scope` parameter; it inherits the configured developer key's allowed scope set. The connector separately enforces its read/write grant. For an institution that wants upstream read-only credentials, configure a developer key with only the applicable REST read scopes below and omit the optional GraphQL scope, which is not read-only upstream.
 
 ## Identity, courses, and navigation
 
@@ -16,7 +16,6 @@ url:GET|/api/v1/courses/:course_id/tabs
 url:GET|/api/v1/courses/:course_id/modules
 url:GET|/api/v1/courses/:course_id/modules/:id
 url:GET|/api/v1/courses/:course_id/modules/:module_id/items
-url:GET|/api/v1/courses/:course_id/modules/:module_id/items/:id
 url:GET|/api/v1/courses/:course_id/module_item_sequence
 url:GET|/api/v1/courses/:course_id/pages
 url:GET|/api/v1/courses/:course_id/pages/:url_or_id
@@ -26,6 +25,8 @@ url:GET|/api/v1/courses/:course_id/quizzes/:id
 ```
 
 Sources: [users](https://developerdocs.instructure.com/services/canvas/resources/users), [courses](https://developerdocs.instructure.com/services/canvas/resources/courses), [tabs](https://developerdocs.instructure.com/services/canvas/resources/tabs), [modules](https://developerdocs.instructure.com/services/canvas/resources/modules), [pages](https://developerdocs.instructure.com/services/canvas/resources/pages), [quiz metadata](https://developerdocs.instructure.com/services/canvas/resources/quizzes).
+
+Exact module-item reads use the collection route with a 1,000-record bound. The adapter avoids single-item SHOW because Canvas Horizon can record progress during that GET. Collection redirects and pagination links to a different path are refused before dispatch. Explicit progress writes retain their separate scopes below.
 
 ## Assignments, discussions, communication, and planning reads
 
@@ -262,3 +263,39 @@ url:PUT|/api/v1/courses/:course_id/what_if_grades/reset
 ```
 
 The submission-list GET filters to the current user. Writes send only a hypothetical `student_entered_score` or the dedicated reset request, then independently read saved scores and confirm unchanged recorded grades. Course reset verification covers Canvas-visible submissions; its response identifies that coverage limit. Hypothetical aggregate grades come from the mutation response and are not independently recalculated by a read. These endpoints add no teacher grading scope and do not use the generic submission-update PUT. [What-if grades](https://developerdocs.instructure.com/services/canvas/resources/what_if_grades), [submission reads](https://developerdocs.instructure.com/services/canvas/resources/submissions), [course permissions](https://developerdocs.instructure.com/services/canvas/resources/courses).
+
+## Mastery Path selection
+
+```text
+url:POST|/api/v1/courses/:course_id/modules/:module_id/items/:id/select_mastery_path
+```
+
+The adapter uses existing course/enrollment/permission, module-item list and module-item-sequence reads to bind the current student's offered sets. It sends only `assignment_set_id`, with no student override. A subsequent sequence read must confirm selection; assignment access is checked separately and may lag background processing. It supports initial choices only, without claiming the API cannot change an eligible existing choice. [Modules](https://developerdocs.instructure.com/services/canvas/resources/modules)
+
+## Course-group self membership
+
+```text
+url:POST|/api/v1/groups/:group_id/memberships
+url:DELETE|/api/v1/groups/:group_id/users/:user_id
+url:GET|/api/v1/group_categories/:group_category_id
+```
+
+Existing course-group and own-group lists, exact self-membership and group-permission reads establish the target and consequences. The adapter cannot silently remove a membership in another exclusive group or reassign leadership. A pending request is not accepted membership. It does not use management-only membership PUT as a substitute for an ordinary invitation response. [Groups](https://developerdocs.instructure.com/services/canvas/resources/groups), [group categories](https://developerdocs.instructure.com/services/canvas/resources/group_categories)
+
+Discussion attachments reuse the course/group entry and reply POST scopes already listed. They send actual multipart bytes and verify the own file with existing self-file metadata/download reads. No arbitrary multipart path, other-user file or attachment-ID shortcut is exposed.
+
+## Feedback read markers
+
+```text
+url:PUT|/api/v1/courses/:course_id/assignments/:assignment_id/submissions/:user_id/read/:item
+url:DELETE|/api/v1/courses/:course_id/assignments/:assignment_id/submissions/:user_id/read
+url:GET|/api/v1/courses/:course_id/assignments/:assignment_id/submissions/:user_id/rubric_assessments/read
+url:PUT|/api/v1/courses/:course_id/assignments/:assignment_id/submissions/:user_id/rubric_assessments/read
+url:GET|/api/v1/courses/:course_id/assignments/:assignment_id/submissions/:user_id/document_annotations/read
+url:PUT|/api/v1/courses/:course_id/assignments/:assignment_id/submissions/:user_id/document_annotations/read
+url:POST|/api/graphql
+```
+
+The optional GraphQL scope is **broad upstream access**, not a read-only Canvas scope: it can authorize queries and mutations within the user's existing permissions. Omit it if that scope is unacceptable; general feedback-state reads/changes then remain unavailable. Rubric/annotation markers use the dedicated REST routes and do not require GraphQL. This connector exposes only one fixed, side-effect-free GraphQL query for an independently verified own submission's identity and `readState`; there is no arbitrary query or mutation tool.
+
+The REST submission include for read state can itself mark feedback read, so it is never used for preparation or verification. Marking aggregate feedback read explicitly reviews and performs three non-atomic item writes (grade, comment, rubric); comment marking covers all visible comments across attempts. Failure stops the sequence and leaves the receipt uncertain. The separate rubric-assessment/annotation preference flags do not establish aggregate read state. Feedback changes use their own write execution group and cannot grade, submit coursework or change another student's state. [Submissions](https://developerdocs.instructure.com/services/canvas/resources/submissions), [GraphQL scope](https://canvas.instructure.com/doc/api/graph_ql.html), [read-state resolver](https://github.com/instructure/canvas-lms/blob/master/app/graphql/types/submission_type.rb)

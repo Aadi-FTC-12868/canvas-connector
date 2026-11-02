@@ -12,10 +12,11 @@ This module is internal. The public entry point is `Canvas` in _client.py.
 """
 from __future__ import annotations
 
-import logging
 import ipaddress
+import logging
 import math
 import os
+import re
 import socket
 import tempfile
 import time
@@ -128,9 +129,15 @@ class CanvasHTTP:
         first = True
         seen: set[str] = set()
         page_count = 0
+        collection_path: bytes | None = None
 
         while first or next_url:
-            current = str(self._request_url(request, absolute_url=next_url))
+            current_url = self._request_url(request, absolute_url=next_url)
+            if first:
+                collection_path = current_url.raw_path.split(b"?", 1)[0]
+            if request.pin_pagination_path and current_url.raw_path.split(b"?", 1)[0] != collection_path:
+                raise CanvasError("pagination left the requested Canvas collection path")
+            current = str(current_url)
             if current in seen:
                 raise CanvasError("pagination loop detected")
             if page_count >= self._max_pages:
@@ -141,7 +148,12 @@ class CanvasHTTP:
                 raw, headers = self._raw_request(request, absolute_url=None)
                 first = False
             else:
-                raw, headers = self._raw_request(request, absolute_url=next_url)
+                try:
+                    raw, headers = self._raw_request(request, absolute_url=next_url)
+                except CanvasError as error:
+                    if request.pin_pagination_path and error.status == 404:
+                        raise CanvasError("A later Canvas pagination page was unavailable; collection is incomplete") from error
+                    raise
 
             page = request.decode(raw)
             if not isinstance(page, list):
@@ -150,7 +162,10 @@ class CanvasHTTP:
                 )
             yield from page
 
-            links = parse_link_header(headers.get("Link") or headers.get("link"))
+            link_header = headers.get("Link") or headers.get("link")
+            if request.pin_pagination_path:
+                _validate_pinned_links(link_header)
+            links = parse_link_header(link_header)
             next_url = links.next
 
     def exhaust(self, request: CanvasRequest[Response]) -> list[Any]:
@@ -206,6 +221,7 @@ class CanvasHTTP:
             # Retryable?
             if (
                 isinstance(err, CanvasRateLimitError)
+                and request.allow_retries
                 and attempt <= self._rate_limit_retries
             ):
                 delay = err.retry_after
@@ -233,11 +249,22 @@ class CanvasHTTP:
         headers["Authorization"] = f"Bearer {self._config.token}"
         json_body = request.json_body()
         form_body = request.form_body()
-        if json_body is not None and form_body is not None:
-            raise ValueError("request cannot define both json_body and form_body")
+        files = request.multipart_files()
+        if json_body is not None and (form_body is not None or files is not None):
+            raise ValueError("request cannot combine json_body with form_body or multipart_files")
+        if files is not None:
+            if not isinstance(files, dict) or not files:
+                raise ValueError("multipart_files must contain immutable named file parts")
+            for field, part in files.items():
+                if (not isinstance(field, str) or not field or
+                        not isinstance(part, tuple) or len(part) != 3 or
+                        not isinstance(part[0], str) or not part[0] or
+                        type(part[1]) is not bytes or not isinstance(part[2], str) or not part[2] or
+                        any(ord(c) < 32 or ord(c) == 127 for c in field + part[0] + part[2])):
+                    raise ValueError("multipart parts require a field, filename, immutable bytes and content type")
 
         outgoing = self._client.build_request(
-            request.method, url, headers=headers, json=json_body, data=form_body,
+            request.method, url, headers=headers, json=json_body, data=form_body, files=files,
         )
         for redirects in range(_MAX_REDIRECTS + 1):
             # Explicitly disable injected-client auth and automatic redirects.
@@ -246,6 +273,10 @@ class CanvasHTTP:
             response = self._client.send(outgoing, auth=None, follow_redirects=False)
             if not response.has_redirect_location:
                 return response
+            if not request.allow_redirects:
+                response.close()
+                raise CanvasError("redirects are disabled for this Canvas request", status=response.status_code,
+                                  url=str(outgoing.url))
             if redirects == _MAX_REDIRECTS or response.next_request is None:
                 response.close()
                 raise CanvasError("API redirect limit exceeded")
@@ -360,6 +391,30 @@ class CanvasHTTP:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
         raise AssertionError("unreachable")
+
+
+def _validate_pinned_links(header: str | None) -> None:
+    """Do not mistake an unsupported Link representation for exhaustion.
+
+    The legacy parser accepts Canvas's canonical quoted relation format. For
+    safety-sensitive collection lookups require the entire header to follow
+    that format; an unfamiliar format means incomplete coverage, not no next
+    page. Other requests retain their existing parser behavior.
+    """
+    if not header or not header.strip():
+        return
+    cursor = 0
+    relations: set[str] = set()
+    for match in re.finditer(r'<[^<>]+>;\s*rel="([^"]+)"', header):
+        separator = header[cursor:match.start()].strip()
+        relation = match[1]
+        if (separator != ("," if relations else "") or relation in relations or
+                relation not in {"current", "next", "prev", "first", "last"}):
+            raise CanvasError("Canvas pagination Link header is ambiguous or unsupported; collection is incomplete")
+        relations.add(relation)
+        cursor = match.end()
+    if not relations or header[cursor:].strip():
+        raise CanvasError("Canvas pagination Link header is malformed or unsupported; collection is incomplete")
 
 
 def _coerce(v: Any) -> str:

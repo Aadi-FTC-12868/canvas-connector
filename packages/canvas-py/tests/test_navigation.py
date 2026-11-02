@@ -141,10 +141,10 @@ def test_external_unsafe_and_unsupported_urls_never_make_network_requests(url, s
 
 def test_module_item_lock_stops_content_fetch_and_preserves_requirements():
     def handler(request):
-        assert request.url.path == "/api/v1/courses/1/modules/10/items/101"
-        return httpx.Response(200, json={"id": 101, "type": "Assignment", "content_id": 7,
+        assert request.url.path == "/api/v1/courses/1/modules/10/items"
+        return httpx.Response(200, json=[{"id": 101, "module_id": 10, "type": "Assignment", "content_id": 7,
             "completion_requirement": {"type": "must_submit", "completed": False},
-            "content_details": {"locked_for_user": True, "lock_explanation": "Finish previous module"}})
+            "content_details": {"locked_for_user": True, "lock_explanation": "Finish previous module"}}])
 
     result = make_canvas(handler).navigation.open_item(1, "module_item", "101", module_id=10)
     assert result["data"]["access"] == "locked"
@@ -158,8 +158,8 @@ def test_module_item_reads_target_and_sequence_never_marks_read():
     def handler(request):
         assert request.method == "GET"
         calls.append(request.url.path)
-        if request.url.path.endswith("/items/101"):
-            return httpx.Response(200, json={"id": 101, "type": "Page", "page_url": "intro", "content_details": {"locked_for_user": False}})
+        if request.url.path.endswith("/items"):
+            return httpx.Response(200, json=[{"id": 101, "module_id": 10, "type": "Page", "page_url": "intro", "content_details": {"locked_for_user": False}}])
         if request.url.path.endswith("/pages/intro"):
             return httpx.Response(200, json={"page_id": 4, "url": "intro", "body": "Intro"})
         assert request.url.params["asset_type"] == "ModuleItem"
@@ -282,8 +282,8 @@ def test_module_item_composition_cannot_extend_nested_page_ttl(monkeypatch):
 
     def handler(request):
         calls[request.url.path] += 1
-        if request.url.path.endswith("/items/101"):
-            return httpx.Response(200, json={"id": 101, "type": "Page", "page_url": "intro"})
+        if request.url.path.endswith("/items"):
+            return httpx.Response(200, json=[{"id": 101, "module_id": 10, "type": "Page", "page_url": "intro"}])
         return httpx.Response(200, json={"page_id": 4, "url": "intro", "body": f"Version {calls[request.url.path]}"})
 
     nav = make_canvas(handler).navigation

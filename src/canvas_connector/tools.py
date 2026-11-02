@@ -21,7 +21,7 @@ from canvas_py.navigation import CourseSection, ItemType, AssetType
 from mcp.types import ToolAnnotations
 
 from .actions import ActionStore, ActionRequest, ACTION_KINDS, EXECUTE_ROUTES, PositiveId, Request
-from . import group_content, preferences, enrollments, bookmarks, what_if_grades
+from . import group_content, preferences, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, feedback
 from .responses import ResponseStore, dump, envelope, external_link, failure, window
 
 
@@ -93,7 +93,7 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
         return envelope({"reads": ["courses", "home", "modules", "assignments", "grades", "syllabus", "pages", "files", "documents",
             "quizzes_metadata", "discussions", "announcements", "submission_feedback", "inbox", "planner", "calendar", "people", "groups",
             "group_content", "file_quota", "notification_preferences", "favorites", "course_nicknames", "course_colors",
-            "course_invitations", "bookmarks", "what_if_grades"],
+            "course_invitations", "bookmarks", "what_if_grades", "mastery_path_options", "group_membership_options", "feedback_read_state"],
             "actions": ACTION_KINDS, "write_workflow": "Prepare exact payload; obtain user authorization; call the returned execute route with action_id.",
             "permission_groups": sorted(set(EXECUTE_ROUTES.values())),
             "client_approvals": "Client controls always allow/ask/deny. Server write scopes and Canvas permissions are also enforced.",
@@ -413,6 +413,23 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
         return bookmarks.list_bookmarks(canvas, offset, limit)
 
     @tool()
+    def canvas_mastery_path(course_id: PositiveId, module_id: PositiveId, item_id: PositiveId,
+                            offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        """Read only your offered Mastery Path sets and selection state for an exact module item. Choosing a path and completing its coursework are separate states."""
+        return mastery_paths.read_mastery_paths(provider(), course_id, module_id, item_id, offset, limit)
+
+    @tool()
+    def canvas_group_membership_options(course_id: PositiveId, offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        """Discover visible course groups and your exact self-membership options. Pending approval is not accepted membership; invitations may require a Canvas handoff."""
+        return group_memberships.list_membership_options(provider(), course_id, offset, limit)
+
+    @tool()
+    def canvas_feedback_read_state(course_id: PositiveId, assignment_id: PositiveId,
+                                   part: Literal["submission", "rubric", "annotations"] = "submission") -> dict[str, Any]:
+        """Read your submission feedback, rubric or annotation marker without marking it read. Submission state needs the fixed Canvas GraphQL read query; no arbitrary queries are accepted."""
+        return feedback.read_feedback_state(provider(), course_id, assignment_id, part)
+
+    @tool()
     def canvas_course_summary(course_id: PositiveId, lookback_days: int = 14, lookahead_days: int = 7) -> dict[str, Any]:
         """Compose a current course catch-up with deadlines, feedback and announcements. Inspect its source coverage before conclusions."""
         if not 0 <= lookback_days <= 90 or not 0 <= lookahead_days <= 90:
@@ -541,6 +558,26 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
     def canvas_update_what_if_grades(action_id: str) -> dict[str, Any]:
         """Save/reset prepared hypothetical assignment scores or reset your course What-if scores after authorization. Never edits actual grades. Course-wide reset verification covers only Canvas-visible submissions; inspect coverage."""
         return execute_as(action_id, "canvas_update_what_if_grades")
+
+    @tool(write=True, destructive=True)
+    def canvas_select_mastery_path(action_id: str) -> dict[str, Any]:
+        """Select the exact prepared, initially offered Mastery Path after authorization. Readback verifies selection separately from assignment release and coursework completion."""
+        return execute_as(action_id, "canvas_select_mastery_path")
+
+    @tool(write=True, destructive=True)
+    def canvas_manage_group_membership(action_id: str) -> dict[str, Any]:
+        """Join/request to join, leave a course group, or cancel your own pending request after exact authorization. This cannot silently switch exclusive groups or manage another user's membership."""
+        return execute_as(action_id, "canvas_manage_group_membership")
+
+    @tool(write=True, destructive=True)
+    def canvas_post_discussion_attachment(action_id: str) -> dict[str, Any]:
+        """Post the prepared course/group discussion entry or reply with its exact attached bytes after authorization. Check entry and attachment verification; uncertain writes must never be retried blindly."""
+        return execute_as(action_id, "canvas_post_discussion_attachment")
+
+    @tool(write=True, destructive=True)
+    def canvas_update_feedback_read_state(action_id: str) -> dict[str, Any]:
+        """Apply the authorized prepared feedback read/unread marker, or mark rubric/annotations read. This does not submit work or attest that feedback was understood."""
+        return execute_as(action_id, "canvas_update_feedback_read_state")
 
     @tool(write=True, destructive=True)
     def canvas_send_message(action_id: str) -> dict[str, Any]:

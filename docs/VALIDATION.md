@@ -1,6 +1,6 @@
 # Validation record
 
-Development release 0.7.0, validated November 2, 2026 UTC.
+Development release 0.8.0, validated November 2, 2026 UTC.
 Historical installation, container and benchmark evidence below is identified by release; those checks are not implied to have been repeated for every new capability.
 These checks do not establish complete Canvas app parity or a production service.
 
@@ -14,17 +14,37 @@ These checks do not establish complete Canvas app parity or a production service
   discovery metadata, with or without a trailing slash in operator configuration.
   Endpoint construction and CSRF origin checks remain separately verified.
 
-- Python 3.12 local check for 0.7.0: **1,878 tests passed; 13 PostgreSQL
-  tests skipped** without a local PostgreSQL instance. New cases cover group
-  participation, invitations, bookmarks and hypothetical grades through both
-  Canvas HTTP mock transport and MCP tool boundaries. Version 0.6.1 Linux CI
-  passed 1,392 tests, including all 13 PostgreSQL cases, with two native OCR
-  cases skipped; both OCR tests passed locally. Two upstream warnings remain:
-  Starlette's test-client httpx deprecation and MCP/Pydantic's settings forward reference.
+- Python 3.12 local check for 0.8.0: **2,383 tests passed; 13 PostgreSQL
+  tests skipped** without a local PostgreSQL instance. New coverage includes
+  Mastery Paths, self group membership, discussion attachment bytes, feedback
+  markers and Horizon read safety. Version 0.7.0 Linux CI passed 1,889 tests,
+  including all 13 PostgreSQL cases, with two native OCR cases skipped; both
+  OCR tests passed locally. Two upstream warnings remain: Starlette's test-client
+  httpx deprecation and MCP/Pydantic's settings forward reference.
 - Real stdio MCP subprocess: initialize, tools/list, schemas, structured results,
   mutation annotations, and capabilities passed on protocol `2025-11-25`.
-  The surface has **64 tools**, **60 prepared action kinds**, and **20 execution
+  The surface has **71 tools**, **69 prepared action kinds**, and **24 execution
   permission groups**. No generic write executor is exposed.
+- Horizon regressions model single-item SHOW completing a must-view requirement.
+  Public item opening, URL routes, preparation, preflight and readback never use
+  SHOW. Collection lookup is bounded, closes pagination, pins its path and refuses
+  redirects or ambiguous Link headers. Missing records are distinguished from
+  incomplete/denied discovery. Old raw snapshots and persisted done/undo/read
+  receipts remain compatible; ignored writes cannot be falsely verified by a GET.
+- Mastery Path checks bind exact offered assignment sets/associations to the own
+  student, perform one selection and independently verify it. Assignment release
+  can remain incomplete; coursework completion is not inferred. Membership checks
+  cover nonmember discovery, pending/accepted states, category-switch prevention,
+  leadership review, exact self readback and no automatic mutation replay.
+- Discussion attachments exercise actual multipart encoding, immutable bytes,
+  course/group audience, entry identity/parent, filename normalization, self-file
+  metadata, bounded download hashes and a final attachment association read.
+  Mutations do not follow redirects or retry on rate-limit/network errors.
+- Feedback checks use a fixed GraphQL read without REST's implicit read marking.
+  Aggregate read updates explicitly cover grade/comment/rubric participation;
+  failures at each of the three steps stop without replay. Comment marking covers
+  all visible attempts. Rubric-assessment and annotation preference flags remain
+  independent; readback, identity, feedback versions and returned grades are checked.
 - Group action checks preserve legacy course payloads, fingerprints and snapshots;
   twelve persisted course action variants execute and replay after a database
   restart with exactly one upstream write. Group membership, author/parent identity,
@@ -84,9 +104,9 @@ These checks do not establish complete Canvas app parity or a production service
   copies successfully with 42 tools, 27 actions, and 11 permission groups.
   Clean extracted packages also bootstrapped
   their bundled Python packages and ran a real MCP session.
-- A clean extracted 0.7.0 MCPB installed its bundled packages through UV and
-  launched a real stdio session with all 64 tools, 60 actions and 20 execution
-  groups, using synthetic credentials, an isolated Python 3.12 install/cache and temporary storage. The cold launch installed 37 dependencies and completed protocol validation in 12.51 seconds; a network guard recorded zero Canvas requests. This
+- A clean extracted 0.8.0 MCPB installed its bundled packages through UV and
+  launched a real stdio session with all 71 tools, 69 actions and 24 execution
+  groups, using synthetic credentials, an isolated Python 3.12 install/cache and temporary storage. The cold launch installed 37 dependencies and completed protocol validation in 8.21 seconds; a network guard recorded zero Canvas requests. This
   validates the packaged runtime, separately from native client installation.
 - Source releases use an allowlist, SHA-256 manifests, safe archive paths, and a
   private-path/school-marker scan. A known private-token scan found zero matches
@@ -101,7 +121,7 @@ These checks do not establish complete Canvas app parity or a production service
   plugin archives, and Docker image.
 
 - The public [source repository](https://github.com/Aadi-FTC-12868/canvas-connector)
-  has its MIT license, tracked source history, and [passing 0.6.1 Linux CI](https://github.com/Aadi-FTC-12868/canvas-connector/actions/runs/41393795570).
+  has its MIT license, tracked source history, and [passing 0.7.0 Linux CI](https://github.com/Aadi-FTC-12868/canvas-connector/actions/runs/41395764295).
   The website serves the reviewed source and install packages.
 - A reproducible [synthetic workload](BENCHMARKS.md) checked 1,000 authenticated
   profile requests across 64 accounts with one and two SQLite workers. Both runs

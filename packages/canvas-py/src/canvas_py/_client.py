@@ -25,6 +25,7 @@ import httpx
 from ._config import CanvasConfig, load_config
 from ._errors import CanvasError
 from ._http import CanvasHTTP
+from ._module_item_read import read_module_item_raw
 from .endpoints.activity import GetActivityStreamSummary, ListActivityStream
 from .endpoints.announcements import ListAnnouncements
 from .endpoints.assignments import GetAssignment, ListAssignments
@@ -59,7 +60,7 @@ from .endpoints.files import (
     ListUserFiles,
     ListUserFolders,
 )
-from .endpoints.modules import GetModuleItem, GetModuleItems, GetModuleItemSequence, ListModules
+from .endpoints.modules import GetModuleItems, GetModuleItemSequence, ListModules
 from .endpoints.navigation import GetCourseTabs, GetFrontPage, GetPage, GetQuiz, ListPages, ListQuizzes
 from .endpoints.submissions import (
     AddSubmissionComment,
@@ -252,7 +253,8 @@ class _ModulesAPI:
         return self._http.exhaust(GetModuleItems(course_id, module_id))
 
     def get_item(self, course_id: int, module_id: int, item_id: int) -> ModuleItem:
-        return self._http.send(GetModuleItem(course_id, module_id, item_id))
+        # SHOW records a view in Horizon. Collection lookup is a genuine read.
+        return ModuleItem.model_validate(read_module_item_raw(self._http, course_id, module_id, item_id))
 
     def sequence(self, course_id: int, asset_type: str, asset_id: str) -> dict[str, Any]:
         return self._http.send(GetModuleItemSequence(course_id, asset_type, asset_id))

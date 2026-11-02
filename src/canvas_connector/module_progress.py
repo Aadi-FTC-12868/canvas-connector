@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal, Union
 
 from canvas_py import Canvas
+from canvas_py._module_item_read import read_module_item_raw
 from canvas_py._request import CanvasRequest, QueryPair
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
@@ -55,20 +56,11 @@ class _ModuleState(CanvasRequest[dict[str, Any]]):
         return f"courses/{self.action.course_id}/modules/{self.action.module_id}"
 
 
-class _ItemState(_ModuleState):
-    @property
-    def path(self) -> str:
-        return super().path + f"/items/{self.action.item_id}"
-
-    def query_pairs(self) -> list[QueryPair]:
-        return [("include[]", "content_details")]
-
-
-class _SetProgress(_ItemState):
+class _SetProgress(_ModuleState):
     @property
     def path(self) -> str:
         suffix = "done" if isinstance(self.action, ModuleMarkDone) else "mark_read"
-        return super().path + "/" + suffix
+        return super().path + f"/items/{self.action.item_id}/" + suffix
 
     @property
     def method(self) -> str:
@@ -132,7 +124,7 @@ def snapshot(canvas: Canvas, p: dict) -> dict:
     _available(module, "Module", item_url)
     if module.get("state") not in {"unlocked", "started", "completed"}:
         raise ValueError(f"Module is locked or the current student's module state is unknown; open {item_url} in Canvas")
-    item = _object(canvas, _ItemState(action))
+    item = read_module_item_raw(canvas, action.course_id, action.module_id, action.item_id)
     _identity(item, "id", action.item_id)
     _identity(item, "module_id", action.module_id)
     _available(item, "Module item", item_url)
@@ -177,7 +169,7 @@ def perform(canvas: Canvas, p: dict, target: dict) -> dict:
     # requirement again so direct helper use cannot bypass the action's scope.
     _requirement(target.get("item") or {}, action, item_url)
     canvas.send(_SetProgress(action))
-    item = _object(canvas, _ItemState(action))
+    item = read_module_item_raw(canvas, action.course_id, action.module_id, action.item_id)
     _identity(item, "id", action.item_id)
     _identity(item, "module_id", action.module_id)
     requirement = _requirement(item, action, item_url)

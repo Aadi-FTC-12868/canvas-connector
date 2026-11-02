@@ -40,6 +40,13 @@ class CanvasRequest(Generic[Response]):
 
     method: ClassVar[str] = "GET"
     response_is_paginated: ClassVar[bool] = False
+    # Existing endpoints retain their retry/redirect behavior. Non-idempotent
+    # multipart mutations explicitly disable both to avoid replaying bytes.
+    allow_retries: ClassVar[bool] = True
+    allow_redirects: ClassVar[bool] = True
+    # Opt-in for collection reads where another same-origin route could have
+    # side effects. Pagination may change query parameters, never this path.
+    pin_pagination_path: ClassVar[bool] = False
 
     @property
     def path(self) -> str:
@@ -61,6 +68,14 @@ class CanvasRequest(Generic[Response]):
         """Form-encoded body. Use instead of json_body when the endpoint
         expects application/x-www-form-urlencoded. Mutually exclusive with
         json_body.
+        """
+        return None
+
+    def multipart_files(self) -> dict[str, tuple[str, bytes, str]] | None:
+        """Immutable file parts: field -> (filename, bytes, content type).
+
+        May accompany form_body(), but never json_body(). Streams and local
+        paths are deliberately unsupported: callers must snapshot bytes first.
         """
         return None
 

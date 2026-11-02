@@ -20,6 +20,7 @@ DONE = {"kind": "module_mark_done", **BASE}
 READ = {"kind": "module_mark_read", **BASE}
 MODULE_PATH = "courses/1/modules/2"
 ITEM_PATH = MODULE_PATH + "/items/3"
+ITEMS_PATH = MODULE_PATH + "/items"
 
 
 class ModuleCanvas:
@@ -57,12 +58,15 @@ class ModuleCanvas:
             return {"id": self.actor}
         if path == MODULE_PATH:
             return copy.deepcopy(self.module)
-        if path == ITEM_PATH:
-            assert request.query_pairs() == [("include[]", "content_details")]
+        if path == ITEMS_PATH:
+            assert request.query_pairs() == [("include[]", "content_details"), ("per_page", 100)]
             if self.writes and self.readback_error:
                 raise self.readback_error
-            return copy.deepcopy(self.item)
+            return [copy.deepcopy(self.item)]
         raise AssertionError((method, path))
+
+    def paginate(self, request):
+        yield from self.send(request)
 
 
 @pytest.mark.parametrize("payload,requirement,method,endpoint,expected", [
@@ -80,7 +84,7 @@ def test_exact_progress_endpoint_and_readback(payload, requirement, method, endp
     assert result["verified"] is True
     assert result["completion_requirement"] == {"type": requirement, "completed": expected}
     assert canvas.writes == [(method, ITEM_PATH + "/" + endpoint)]
-    assert canvas.requests[-1][:2] == ("GET", ITEM_PATH)
+    assert canvas.requests[-1][:2] == ("GET", ITEMS_PATH)
     assert progress.ROUTES[payload["kind"]] == "canvas_update_module_progress"
 
 
@@ -144,7 +148,8 @@ def test_read_cannot_complete_mark_done_requirement():
 def test_unknown_locked_unpublished_or_moved_items_rejected(location, change):
     canvas = ModuleCanvas()
     getattr(canvas, location).update(change)
-    with pytest.raises(ValueError):
+    error = CanvasError if location == "item" and {"id", "module_id"} & change.keys() else ValueError
+    with pytest.raises(error):
         progress.snapshot(canvas, DONE)
     assert not canvas.writes
 
@@ -200,7 +205,7 @@ def test_wrong_readback_identity_or_requirement_is_not_verified(change):
     canvas = ModuleCanvas()
     target = progress.snapshot(canvas, DONE)
     canvas.after_write = lambda c: c.item.update(change)
-    with pytest.raises(ValueError):
+    with pytest.raises(CanvasError if {"id", "module_id"} & change.keys() else ValueError):
         progress.perform(canvas, DONE, target)
     assert len(canvas.writes) == 1
 
@@ -264,9 +269,10 @@ def test_real_http_client_uses_fixed_paths_and_content_details():
             body = {"id": state.actor}
         elif path == MODULE_PATH:
             body = state.module
-        elif path == ITEM_PATH:
+        elif path == ITEMS_PATH:
             assert request.url.params.get_list("include[]") == ["content_details"]
-            body = state.item
+            assert request.url.params["per_page"] == "100"
+            body = [state.item]
         elif path == ITEM_PATH + "/mark_read":
             assert request.method == "POST" and request.content == b""
             state.item["completion_requirement"]["completed"] = True

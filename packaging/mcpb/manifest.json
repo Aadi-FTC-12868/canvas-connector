@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "canvas-connector-personal",
   "display_name": "Canvas Connector \u2014 Personal Local",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Run the open-source Canvas connector locally for your own account.",
   "long_description": "Personal, single-user local use with your own Canvas token. This extension is not the hosted multi-user onboarding flow. Schools may restrict API access. Public hosted connections require institution-authorized Canvas OAuth. Writes are disabled by default and still require your exact authorization when enabled. Python and dependencies are managed through the host's UV runtime; first use requires internet access.",
   "author": {
@@ -59,7 +59,7 @@
     "allow_writes": {
       "type": "boolean",
       "title": "Enable prepared Canvas actions",
-      "description": "Allow specifically authorized submissions, comments, discussions, messages, uploads, personal file organization, notifications, preferences, module progress, calendar, planner, course invitation, bookmark and hypothetical grade changes. Host approvals and your exact instructions still apply.",
+      "description": "Allow specifically authorized submissions, comments, discussions, messages, uploads, personal file organization, notifications, preferences, module progress, calendar, planner, course invitation, bookmark, hypothetical grade, Mastery Path, group membership and feedback marker changes. Host approvals and your exact instructions still apply.",
       "default": false
     }
   },
