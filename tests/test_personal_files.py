@@ -499,3 +499,50 @@ def test_prepared_delete_with_denied_readback_stays_uncertain_and_cannot_replay(
         assert store.execute(canvas, "alice", prepared["action_id"], lambda: None)["state"] == "uncertain"
         assert store.prepare(canvas, "alice", payload)["state"] == "uncertain"
     assert len(state.writes) == 1
+
+
+@pytest.mark.parametrize("payload", ACTIONS)
+def test_personal_mutation_explicitly_disables_retries_and_redirects(payload):
+    request = files._Mutation(ADAPTER.validate_python(payload))
+    assert request.allow_retries is False
+    assert request.allow_redirects is False
+
+
+@pytest.mark.parametrize("payload", ACTIONS)
+@pytest.mark.parametrize("failure", [429, 403, "network", 302, 307, 308])
+def test_unconfirmed_http_mutation_is_single_attempt_and_terminal(payload, failure):
+    state, store = PersonalState(), ActionStore()
+    dispatched = []
+
+    def handler(request):
+        dispatched.append((request.method, str(request.url)))
+        # Record a followed target independently, including a redirect that
+        # changes POST to GET. It must never be reached, even on the same origin.
+        if request.url.path == "/api/v1/redirect-target":
+            return httpx.Response(200, json={"id": 20})
+        response = state.handler(request)
+        if request.method == "GET":
+            return response
+        # Simulate the response being lost or replaced after the server applied
+        # the mutation. An uncertain result is not evidence of a rollback.
+        if failure == "network":
+            raise httpx.ReadError("synthetic connection lost after apply", request=request)
+        if failure in {302, 307, 308}:
+            return httpx.Response(failure, headers={"Location": "/api/v1/redirect-target"})
+        return httpx.Response(failure, json={"message": "Rate Limit Exceeded"}, headers={"Retry-After": "0"})
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler)) as http,
+        Canvas(CanvasConfig("https://school.example", "synthetic-token"), http_client=http) as canvas,
+    ):
+        prepared = store.prepare(canvas, "alice", payload)
+        assert not state.writes
+        receipt = store.execute(canvas, "alice", prepared["action_id"], lambda: None)
+        assert receipt["state"] == "uncertain", receipt
+        assert receipt["result"]["upstream_write_attempted"] is True
+        requests_after_attempt = list(dispatched)
+        assert store.execute(canvas, "alice", prepared["action_id"], lambda: None)["state"] == "uncertain"
+        assert store.prepare(canvas, "alice", payload)["state"] == "uncertain"
+        assert dispatched == requests_after_attempt
+    assert len(state.writes) == 1
+    assert not any("redirect-target" in url for _, url in dispatched)

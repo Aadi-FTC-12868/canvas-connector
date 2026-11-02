@@ -1,6 +1,6 @@
 # Validation record
 
-Development release 0.10.0, validated November 2, 2026 UTC.
+Development release 0.10.1, validated November 2, 2026 UTC.
 Historical installation, container and benchmark evidence below is identified by release; those checks are not implied to have been repeated for every new capability.
 These checks do not establish complete Canvas app parity or a production service.
 
@@ -14,13 +14,22 @@ These checks do not establish complete Canvas app parity or a production service
   discovery metadata, with or without a trailing slash in operator configuration.
   Endpoint construction and CSRF origin checks remain separately verified.
 
-- Python 3.12 check for 0.10.0: **3,279 tests passed; 13 PostgreSQL
+- Python 3.12 check for 0.10.1: **3,392 tests passed; 13 PostgreSQL
   tests skipped** without a local PostgreSQL instance. New coverage includes
   appointments, self-profile/settings changes, native dashboard ordering,
-  advanced Inbox authoring/controls/attachments, passive page reads and existing student actions. Version 0.9.0 Linux CI passed 2,908 tests,
+  advanced Inbox authoring/controls/attachments, passive page reads and existing student actions. Version 0.10.0 Linux CI passed 3,290 tests,
   including all 13 PostgreSQL cases, with two native OCR cases skipped; both
   OCR tests passed locally. Two upstream warnings remain: Starlette's test-client
   httpx deprecation and MCP/Pydantic's settings forward reference.
+- Shared HTTP dispatch now refuses rate-limit replay and redirect following for
+  every method other than GET/HEAD, including older request classes with inherited
+  permissive flags. Forty-nine transport cases cover rate-limit 429/403,
+  301/302/303/307/308 redirects, network failures, server errors, JSON/form/multipart
+  bodies and preserved eligible read behavior. Side-effecting GET upload
+  confirmation retains its explicit opt-out. Forty-nine additional personal-file
+  cases verify all seven action kinds, one mutation after a lost/replaced response,
+  an uncertain terminal receipt and no execution/repreparation replay. These are
+  actual client requests through synthetic HTTP transports; no live writes occur.
 - Real stdio MCP subprocess: initialize, tools/list, schemas, structured results,
   mutation annotations, and capabilities passed on protocol `2025-11-25`.
   The surface has **83 tools**, **83 prepared action kinds**, and **30 execution
@@ -169,10 +178,21 @@ These checks do not establish complete Canvas app parity or a production service
   copies successfully with 42 tools, 27 actions, and 11 permission groups.
   Clean extracted packages also bootstrapped
   their bundled Python packages and ran a real MCP session.
-- A clean extracted 0.10.0 MCPB installed its bundled packages through UV and
+- A clean extracted 0.10.1 MCPB installed its bundled packages through UV and
   launched a real stdio session with all 83 tools, 83 actions and 30 execution
-  groups, using synthetic credentials, an isolated Python 3.12 install/cache and temporary storage. The cold launch installed 37 packages and completed protocol validation in 10.598 seconds; a network guard recorded zero Canvas requests. All 30 execution-group boundaries passed with writes disabled and enabled. This
+  groups, using synthetic credentials, an isolated Python 3.12 install/cache and temporary storage. The cold launch installed 37 packages and completed protocol validation in 7.744 seconds; a network guard recorded zero Canvas requests. All 30 execution-group boundaries passed with writes disabled and enabled. This
   validates the packaged runtime, separately from native client installation.
+- Native `unzip` upgrades from 0.10.0 to 0.10.1 were verified for the source,
+  MCPB and plugin archives using the same paths, Python environments and UV
+  caches. Imported `canvas-py` 0.2.1 source matched the new archive's HTTP client
+  hash; a synthetic rate-limited write dispatched once in every upgraded runtime.
+  Unchanged restarts retained the installed file identity and modification time.
+  All archive entries use the same reviewed UTC release timestamp from
+  `packaging/release.json`, advancing past the previous release's entries.
+  This invalidates timestamp-based build caches while keeping each release
+  reproducible. Package cache keys also track normal source changes and Git
+  commits. These are freshness inputs, not content hashes; use a fresh extraction
+  for downgrades or when obsolete files might remain.
 - Source releases use an allowlist, SHA-256 manifests, safe archive paths, and a
   private-path/school-marker scan. A known private-token scan found zero matches
   without printing or copying that token. Clean source extraction installed,
@@ -186,7 +206,7 @@ These checks do not establish complete Canvas app parity or a production service
   plugin archives, and Docker image.
 
 - The public [source repository](https://github.com/Aadi-FTC-12868/canvas-connector)
-  has its MIT license, tracked source history, and [passing 0.9.0 Linux CI](https://github.com/Aadi-FTC-12868/canvas-connector/actions/runs/41405028567).
+  has its MIT license, tracked source history, and [passing 0.10.0 Linux CI](https://github.com/Aadi-FTC-12868/canvas-connector/actions/runs/41409710203).
   The website serves the reviewed source and install packages.
 - A reproducible [synthetic workload](BENCHMARKS.md) checked 1,000 authenticated
   profile requests across 64 accounts with one and two SQLite workers. Both runs

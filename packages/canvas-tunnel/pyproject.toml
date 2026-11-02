@@ -27,6 +27,7 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.uv]
 package = true
+cache-keys = [{ file = "pyproject.toml" }, { file = "README.md" }, { file = "src/**/*.py" }, { git = { commit = true } }]
 
 [tool.ruff]
 line-length = 100

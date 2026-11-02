@@ -39,4 +39,4 @@ __all__ = [
     "CanvasTransportError",
 ]
 
-__version__ = "0.1.0dev0"
+__version__ = "0.2.1"

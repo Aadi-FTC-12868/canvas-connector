@@ -33,6 +33,9 @@ canvas-mcp-v2 = "canvas_mcp_v2.__main__:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "README.md" }, { file = "src/**/*.py" }, { git = { commit = true } }]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "canvas-connector-personal",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Personal local Canvas navigation and specifically authorized student actions.",
   "author": {
     "name": "Aadi Chandraya"

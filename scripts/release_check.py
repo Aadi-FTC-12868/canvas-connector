@@ -4,10 +4,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import re
 import tomllib
 import zipfile
+from datetime import UTC, datetime
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
@@ -18,8 +19,35 @@ PLUGIN_FILES = {"plugin.json", "mcp.json", "mcp.codex.json", ".mcp.json",
                 ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"}
 HOSTED_FILES = {"packaging/hosted/builtbyaadi.env.example",
                 "packaging/hosted/builtbyaadi.Caddyfile", "packaging/hosted/canvas-connector.service"}
-PATTERNS = [re.compile(r"/Users/"), re.compile(r"bmcss\.instructure\.com", re.I),
+PATTERNS = [re.compile(r"/Users/"), re.compile(r"bmcss\.instructure\.com", re.IGNORECASE),
             re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")]
+
+
+def release_timestamp() -> tuple[int, int, int, int, int, int]:
+    """One reviewed UTC timestamp for reproducible archives and safe upgrades.
+
+    Advancing it with each release invalidates local dependency/build caches
+    when an installer preserves ZIP timestamps while replacing source files.
+    """
+    metadata = json.loads((ROOT / "packaging/release.json").read_text())
+    if not isinstance(metadata, dict) or set(metadata) != {"version", "source_date_epoch"}:
+        raise ValueError("Release metadata must contain version and source_date_epoch")
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    if metadata["version"] != version:
+        raise ValueError("Release metadata version must match the root project version")
+    epoch = metadata["source_date_epoch"]
+    if type(epoch) is not int or epoch % 2 or not 315532800 <= epoch <= 4354819198:
+        raise ValueError("Release source_date_epoch must be an even UTC second within the ZIP range")
+    value = datetime.fromtimestamp(epoch, UTC)
+    return value.year, value.month, value.day, value.hour, value.minute, value.second
+
+
+def archive_entry(name: str, timestamp: tuple[int, int, int, int, int, int]) -> zipfile.ZipInfo:
+    info = zipfile.ZipInfo(name, date_time=timestamp)
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.create_system = 3
+    info.external_attr = 0o100644 << 16
+    return info
 
 
 def source_files():
@@ -50,6 +78,7 @@ def source_files():
 
 
 def run(build: bool):
+    timestamp = release_timestamp()
     files = list(source_files())
     failures = []
     for path in files:
@@ -68,8 +97,10 @@ def run(build: bool):
         destination.parent.mkdir(exist_ok=True)
         with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as bundle:
             for path in files:
-                bundle.write(path, "canvas-connector/" + str(path.relative_to(ROOT)))
-            bundle.writestr("canvas-connector/RELEASE-MANIFEST.json", json.dumps(manifest, indent=2) + "\n")
+                name = "canvas-connector/" + str(path.relative_to(ROOT))
+                bundle.writestr(archive_entry(name, timestamp), path.read_bytes())
+            bundle.writestr(archive_entry("canvas-connector/RELEASE-MANIFEST.json", timestamp),
+                            json.dumps(manifest, indent=2) + "\n")
         print(str(destination))
 
 

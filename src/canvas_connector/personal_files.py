@@ -130,6 +130,11 @@ class _File(CanvasRequest[dict[str, Any]]):
 
 
 class _Mutation(CanvasRequest[dict[str, Any]]):
+    # An unconfirmed mutation may already have reached Canvas. Never replay it
+    # after a throttle response, or forward its body through a redirect.
+    allow_retries = False
+    allow_redirects = False
+
     def __init__(self, action: PersonalFileActionTypes):
         self.action = action
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "canvas-py"
-version = "0.2.0"
+version = "0.2.1"
 description = "Typed Canvas API client with navigation and document extraction."
 requires-python = ">=3.11"
 readme = "README.md"
@@ -33,6 +33,9 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "README.md" }, { file = "src/**/*.py" }, { git = { commit = true } }]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

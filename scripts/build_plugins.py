@@ -4,11 +4,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import shutil
 import sys
 import tempfile
 import zipfile
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_mcpb
@@ -54,6 +54,7 @@ def plugin_contents() -> tuple[str, dict[str, bytes]]:
 
 def build_plugins(output: Path | None = None) -> tuple[Path, Path]:
     version, files = plugin_contents()
+    timestamp = release_check.release_timestamp()
     destination = output or ROOT / "dist" / f"canvas-connector-{version}-plugins.zip"
     directory = destination.with_suffix("")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -64,10 +65,7 @@ def build_plugins(output: Path | None = None) -> tuple[Path, Path]:
                 target = stage / "marketplace" / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
-                info = zipfile.ZipInfo("canvas-connector-plugins/" + name, date_time=(1980, 1, 1, 0, 0, 0))
-                info.compress_type = zipfile.ZIP_DEFLATED
-                info.external_attr = 0o100644 << 16
-                bundle.writestr(info, data)
+                bundle.writestr(release_check.archive_entry("canvas-connector-plugins/" + name, timestamp), data)
         # Replace only this builder's generated sibling output directory.
         if directory.exists():
             marker = directory / "PLUGIN-MANIFEST.json"

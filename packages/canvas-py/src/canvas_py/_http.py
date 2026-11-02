@@ -2,8 +2,8 @@
 
 Mirrors the responsibilities of canvas-ios's API class (research/01-api-layer.md):
     - bearer-token injection
-    - retry on rate limit (429 or 403 with rate-limit message, respecting
-      Retry-After when present)
+    - bounded read retries on rate limit (429 or 403 with rate-limit message,
+      respecting Retry-After when present); writes never replay
     - Link-header pagination
     - typed error exceptions
     - clean abstraction over the underlying HTTP library (httpx)
@@ -47,6 +47,7 @@ _DEFAULT_RATE_LIMIT_RETRIES = 3
 _DEFAULT_RATE_LIMIT_BASE_DELAY = 1.0
 _MAX_RATE_LIMIT_DELAY = 30.0
 _MAX_REDIRECTS = 5
+_REPLAYABLE_METHODS = frozenset({"GET", "HEAD"})
 
 
 class CanvasHTTP:
@@ -181,7 +182,7 @@ class CanvasHTTP:
         *,
         absolute_url: str | None,
     ) -> tuple[Any, httpx.Headers]:
-        """Perform the HTTP call with retry-on-rate-limit.
+        """Perform the HTTP call, retrying only eligible reads on rate limit.
 
         If `absolute_url` is given, the client hits it directly (for next-page
         URLs from Link header). Otherwise the client constructs from
@@ -223,6 +224,7 @@ class CanvasHTTP:
             if (
                 isinstance(err, CanvasRateLimitError)
                 and request.allow_retries
+                and request.method.upper() in _REPLAYABLE_METHODS
                 and attempt <= self._rate_limit_retries
             ):
                 delay = err.retry_after
@@ -274,7 +276,10 @@ class CanvasHTTP:
             response = self._client.send(outgoing, auth=None, follow_redirects=False)
             if not response.has_redirect_location:
                 return response
-            if not request.allow_redirects:
+            # A redirect can repeat a mutation (307/308), or silently change
+            # its method (301/302/303). Endpoint defaults must never permit
+            # either. Side-effecting GETs also opt out on their request class.
+            if not request.allow_redirects or request.method.upper() not in _REPLAYABLE_METHODS:
                 response.close()
                 raise CanvasError("redirects are disabled for this Canvas request", status=response.status_code,
                                   url=str(outgoing.url))

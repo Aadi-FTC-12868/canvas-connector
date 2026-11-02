@@ -4,9 +4,10 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-from pathlib import Path
 import tomllib
 import zipfile
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -28,12 +29,14 @@ def test_bundle_is_allowlisted_reproducible_and_resolves_local_dependencies(tmp_
     with zipfile.ZipFile(first) as bundle:
         names = set(bundle.namelist())
         assert {"manifest.json", "entrypoint.py", "LICENSE", "README-BUNDLE.md",
+                "packaging/release.json",
                 "src/canvas_connector/server.py", "packages/canvas-py/pyproject.toml",
                 "packages/canvas-mcp-v2/pyproject.toml", "packages/canvas-tunnel/uv.lock",
                 "packages/canvas-tunnel/src/canvas_tunnel/bridge.py"} <= names
         assert not any(part in {".env", ".venv", ".git", "tests", "node_modules", "__pycache__"}
                        for name in names for part in Path(name).parts)
         project = tomllib.loads(bundle.read("pyproject.toml").decode())
+        assert "canvas-py==0.2.1" in project["project"]["dependencies"]
         assert project["tool"]["uv"]["sources"] == {
             "canvas-py": {"path": "packages/canvas-py"},
             "canvas-mcp-v2": {"path": "packages/canvas-mcp-v2"}}
@@ -45,6 +48,7 @@ def test_bundle_is_allowlisted_reproducible_and_resolves_local_dependencies(tmp_
         assert manifest["user_config"]["allow_writes"]["default"] is False
         for name, expected in json.loads(bundle.read("BUNDLE-MANIFEST.json")).items():
             assert hashlib.sha256(bundle.read(name)).hexdigest() == expected
+        assert {info.date_time for info in bundle.infolist()} == {builder.release_check.release_timestamp()}
 
 
 def test_source_allowlist_excludes_nested_environments_but_rejects_source_symlinks(tmp_path, monkeypatch):
@@ -117,8 +121,90 @@ def test_plugin_archive_contains_both_catalogs_and_local_runtime(tmp_path):
         names = set(bundle.namelist())
         assert all(name.startswith("canvas-connector-plugins/") for name in names)
         assert not any(Path(name).name.endswith(".env") for name in names)
+        assert {info.date_time for info in bundle.infolist()} == {builder.release_check.release_timestamp()}
     for name, expected in json.loads((directory / "PLUGIN-MANIFEST.json").read_text()).items():
         assert hashlib.sha256((directory / name).read_bytes()).hexdigest() == expected
+    second, _ = builder.build_plugins(tmp_path / "second-plugins.zip")
+    assert archive.read_bytes() == second.read_bytes()
+
+
+def isolated_release(checker, tmp_path, monkeypatch, metadata):
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "VERSION", "1.2.3")
+    (tmp_path / "packaging").mkdir(exist_ok=True)
+    (tmp_path / "packaging/release.json").write_text(json.dumps(metadata))
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n')
+
+
+@pytest.mark.parametrize("metadata", [
+    {}, {"version": "1.2.3"}, {"version": "1.2.4", "source_date_epoch": 1793607874},
+    {"version": "1.2.3", "source_date_epoch": True},
+    {"version": "1.2.3", "source_date_epoch": "1793607874"},
+    {"version": "1.2.3", "source_date_epoch": 1793607874.0},
+    {"version": "1.2.3", "source_date_epoch": 1793607875},
+    {"version": "1.2.3", "source_date_epoch": 315532798},
+    {"version": "1.2.3", "source_date_epoch": 4354819200},
+    {"version": "1.2.3", "source_date_epoch": 1793607874, "unexpected": True},
+])
+def test_invalid_release_metadata_blocks_build_before_archive_creation(tmp_path, monkeypatch, metadata):
+    checker = load_file("invalid_release_metadata", ROOT / "scripts/release_check.py")
+    isolated_release(checker, tmp_path, monkeypatch, metadata)
+    with pytest.raises(ValueError, match="Release"):
+        checker.run(True)
+    assert not (tmp_path / "dist").exists()
+
+
+@pytest.mark.parametrize("epoch,expected", [
+    (315532800, (1980, 1, 1, 0, 0, 0)),
+    (1793607874, (2026, 11, 2, 8, 24, 34)),
+    (4354819198, (2107, 12, 31, 23, 59, 58)),
+])
+def test_release_timestamp_uses_utc_and_supported_zip_bounds(tmp_path, monkeypatch, epoch, expected):
+    checker = load_file("valid_release_metadata", ROOT / "scripts/release_check.py")
+    isolated_release(checker, tmp_path, monkeypatch, {"version": "1.2.3", "source_date_epoch": epoch})
+    assert checker.release_timestamp() == expected
+
+
+def test_source_archive_has_reproducible_reviewed_timestamp_and_exact_manifest(tmp_path, monkeypatch):
+    checker = load_file("source_release_timestamp", ROOT / "scripts/release_check.py")
+    epoch = 1793607874
+    isolated_release(checker, tmp_path, monkeypatch, {"version": "1.2.3", "source_date_epoch": epoch})
+    readme = tmp_path / "README.md"
+    readme.write_text("Synthetic release content\n")
+    checker.run(True)
+    archive = tmp_path / "dist/canvas-connector-1.2.3-source.zip"
+    original = archive.read_bytes()
+    # Local checkout/build timing is not a release input.
+    readme.touch()
+    checker.run(True)
+    assert archive.read_bytes() == original
+    with zipfile.ZipFile(archive) as bundle:
+        expected = checker.release_timestamp()
+        assert {info.date_time for info in bundle.infolist()} == {expected}
+        manifest = json.loads(bundle.read("canvas-connector/RELEASE-MANIFEST.json"))
+        assert set(bundle.namelist()) == {"canvas-connector/" + name for name in manifest} | {
+            "canvas-connector/RELEASE-MANIFEST.json"}
+        for name, digest in manifest.items():
+            assert hashlib.sha256(bundle.read("canvas-connector/" + name)).hexdigest() == digest
+    (tmp_path / "packaging/release.json").write_text(json.dumps({"version": "1.2.3", "source_date_epoch": epoch + 2}))
+    checker.run(True)
+    with zipfile.ZipFile(archive) as bundle:
+        assert all(info.date_time > expected for info in bundle.infolist())
+
+
+def test_changed_client_version_and_local_source_cache_inputs_are_consistent():
+    client = tomllib.loads((ROOT / "packages/canvas-py/pyproject.toml").read_text())
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert "canvas-py==" + client["project"]["version"] in project["project"]["dependencies"]
+    assert '__version__ = "' + client["project"]["version"] + '"' in (
+        ROOT / "packages/canvas-py/src/canvas_py/__init__.py").read_text()
+    for name in ("canvas-py", "canvas-mcp-v2", "canvas-tunnel"):
+        package = tomllib.loads((ROOT / "packages" / name / "pyproject.toml").read_text())
+        assert package["tool"]["uv"]["cache-keys"] == [
+            {"file": "pyproject.toml"}, {"file": "README.md"}, {"file": "src/**/*.py"},
+            {"git": {"commit": True}}]
+    epoch = json.loads((ROOT / "packaging/release.json").read_text())["source_date_epoch"]
+    assert datetime.fromtimestamp(epoch, UTC).year >= 2026
 
 
 def test_repository_is_a_complete_root_plugin_with_both_catalogs():

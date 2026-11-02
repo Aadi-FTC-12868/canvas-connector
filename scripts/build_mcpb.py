@@ -8,11 +8,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import sys
 import tempfile
 import tomllib
 import zipfile
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release_check
@@ -40,7 +40,7 @@ def bundle_contents() -> dict[str, bytes]:
     release_check.run(False)
     allowed = {p.relative_to(ROOT).as_posix(): p for p in release_check.source_files()}
     required = {"pyproject.toml", "requirements.lock", "README.md", "LICENSE", "SECURITY.md",
-                "packaging/mcpb/manifest.json", "packaging/mcpb/entrypoint.py"}
+                "packaging/release.json", "packaging/mcpb/manifest.json", "packaging/mcpb/entrypoint.py"}
     if missing := required - allowed.keys():
         raise ValueError("Required packaging source is not allowlisted: " + ", ".join(sorted(missing)))
     result = {}
@@ -49,7 +49,7 @@ def bundle_contents() -> dict[str, bytes]:
         runtime = parts[0] in {"src", "skills"}
         dependency = (parts[0] == "packages" and len(parts) >= 3 and
                       (parts[2] == "src" or (len(parts) == 3 and parts[2] in {"pyproject.toml", "README.md", "uv.lock"})))
-        if runtime or dependency or name in {"pyproject.toml", "README.md", "LICENSE", "SECURITY.md", "requirements.lock"}:
+        if runtime or dependency or name in {"pyproject.toml", "README.md", "LICENSE", "SECURITY.md", "requirements.lock", "packaging/release.json"}:
             result[name] = path.read_bytes()
     manifest = json.loads(allowed["packaging/mcpb/manifest.json"].read_text())
     project = tomllib.loads(result["pyproject.toml"].decode())
@@ -73,6 +73,7 @@ def bundle_contents() -> dict[str, bytes]:
 
 def build_bundle(output: Path | None = None) -> Path:
     contents = bundle_contents()
+    timestamp = release_check.release_timestamp()
     version = json.loads(contents["manifest.json"])["version"]
     destination = output or ROOT / "dist" / f"canvas-connector-{version}-personal.mcpb"
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -81,10 +82,7 @@ def build_bundle(output: Path | None = None) -> Path:
     try:
         with zipfile.ZipFile(temporary_path, "w", zipfile.ZIP_DEFLATED) as bundle:
             for name, data in sorted(contents.items()):
-                info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-                info.compress_type = zipfile.ZIP_DEFLATED
-                info.external_attr = 0o100644 << 16
-                bundle.writestr(info, data)
+                bundle.writestr(release_check.archive_entry(name, timestamp), data)
         temporary_path.replace(destination)
     finally:
         temporary_path.unlink(missing_ok=True)

@@ -47,6 +47,13 @@ The source release can build two local artifacts. Both are for the user's own ac
 
 The Desktop extension uses manifest version `0.4` and the `uv` server type. Initial dependency installation needs internet access. Platform declarations do not establish successful installation on every operating system. Manual `.mcpb` installs receive updates by installing a newer file; directory publication is separate. [MCPB manifest](https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md), [Claude Desktop extension installation and secure fields](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop)
 
+After updating, restart the connector and check the reported connector version.
+For manual ZIP installation, use a fresh extraction directory, especially when
+downgrading; old build outputs or files removed in a newer package can otherwise
+remain. Reuse your private Canvas configuration file rather than copying a token
+into the download. A personal tunnel profile is bound to its original source
+path; use a new profile name when selecting a different extracted directory.
+
 Build with `python scripts/build_mcpb.py` and `python scripts/build_plugins.py`. The plugin ZIP contains `.agents/plugins/marketplace.json` and `.claude-plugin/marketplace.json`; its plugin includes portable `plugin.json`/`mcp.json` plus compatibility manifests. Its README provides exact local registration commands. Plugin registration and schema validation do not prove account access or successful host execution. [Codex package format](https://developers.openai.com/plugins/build/plugins), [Claude Code plugin format and configuration](https://code.claude.com/docs/en/plugins-reference)
 
 Public directory submission of an OpenAI local-MCP plugin requires approved-partner access. Custom local marketplaces remain a separate path; this release has no public directory listing. [Desktop-only submission requirements](https://developers.openai.com/plugins/deploy/desktop-only)

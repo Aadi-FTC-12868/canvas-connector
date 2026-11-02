@@ -40,8 +40,9 @@ class CanvasRequest(Generic[Response]):
 
     method: ClassVar[str] = "GET"
     response_is_paginated: ClassVar[bool] = False
-    # Existing endpoints retain their retry/redirect behavior. Non-idempotent
-    # multipart mutations explicitly disable both to avoid replaying bytes.
+    # These flags permit only GET/HEAD retry/redirect handling. The transport
+    # never replays other methods, even if these inherited flags are True.
+    # Side-effecting GETs (e.g. upload confirmation) must disable both too.
     allow_retries: ClassVar[bool] = True
     allow_redirects: ClassVar[bool] = True
     # Opt-in for collection reads where another same-origin route could have
