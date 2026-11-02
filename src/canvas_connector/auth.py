@@ -8,13 +8,15 @@ per-grant credentials, expiry, refresh rotation and revocation.
 from __future__ import annotations
 
 import asyncio
+import functools
 from dataclasses import dataclass, field
+from contextlib import suppress
 from html import escape
 import hmac
 import secrets
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 
 import anyio
@@ -31,12 +33,20 @@ from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Re
 from starlette.routing import Route
 
 from .security import secure_http_client, validate_canvas_origin
-from .storage import Store, digest
+from .storage import open_store, digest
 
 SCOPES = ["canvas:read", "canvas:write"]
 ACCESS_SECONDS = 3600
 GRANT_SECONDS = 30 * 24 * 3600
 COOKIE = "__Host-canvas-oauth"
+
+
+def _offload_storage(fn):
+    """Keep synchronous SQLite/PostgreSQL work off the HTTP event loop."""
+    @functools.wraps(fn)
+    async def run(*args, **kwargs):
+        return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
+    return run
 
 
 @dataclass(frozen=True)
@@ -81,10 +91,11 @@ def _headers() -> dict[str, str]:
 
 
 class CanvasOAuthProvider:
-    def __init__(self, *, issuer_url: str, database_path: str | Path,
-                 encryption_key: str, institutions: list[Institution],
+    def __init__(self, *, issuer_url: str, database_path: str | Path | None = None,
+                 encryption_key: str | None = None, institutions: list[Institution],
                  allow_local_http: bool = False,
-                 http_client_factory: Callable[[], httpx.Client] = secure_http_client):
+                 http_client_factory: Callable[[], httpx.Client] = secure_http_client,
+                 store: Any = None):
         parsed = urlsplit(issuer_url)
         local = allow_local_http and parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
         if (parsed.scheme != "https" and not local) or not parsed.hostname or parsed.path not in ("", "/") or parsed.query or parsed.fragment or parsed.username or parsed.password:
@@ -97,9 +108,10 @@ class CanvasOAuthProvider:
         if not institutions or len({x.origin for x in institutions}) != len(institutions):
             raise ValueError("Configure at least one institution with a unique origin")
         self.institutions = {x.origin: x for x in institutions}
-        self.store = Store(database_path, encryption_key)
+        if store is None and (database_path is None or encryption_key is None):
+            raise ValueError("Provide an encrypted storage backend or database path and key")
+        self.store = store if store is not None else open_store(database_path, encryption_key)
         self.http_client_factory = http_client_factory
-        self.refresh_lock = asyncio.Lock()
 
     @property
     def auth_settings(self) -> AuthSettings:
@@ -140,11 +152,13 @@ class CanvasOAuthProvider:
             await self.revoke_token(token)
         return Response(status_code=200, headers=_headers())
 
-    async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
+    @_offload_storage
+    def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         value = self.store.get("client", client_id)
         return OAuthClientInformationFull.model_validate(value) if value else None
 
-    async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+    @_offload_storage
+    def register_client(self, client_info: OAuthClientInformationFull) -> None:
         if not client_info.client_id or not client_info.redirect_uris or len(client_info.redirect_uris) > 10:
             raise RegistrationError("invalid_client_metadata", "A client needs 1–10 redirect URIs")
         for uri in client_info.redirect_uris:
@@ -157,7 +171,8 @@ class CanvasOAuthProvider:
         self.store.put("client", client_info.client_id, client_info.model_dump(mode="json"),
                        expires=time.time() + 365 * 86400)
 
-    async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
+    @_offload_storage
+    def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         scopes = params.scopes if params.scopes is not None else (client.scope or "canvas:read").split()
         params = params.model_copy(update={"scopes": scopes})
         if set(scopes) - set(SCOPES) or "canvas:read" not in scopes:
@@ -175,14 +190,13 @@ class CanvasOAuthProvider:
             "params": params.model_dump(mode="json"), "expires": time.time() + 600}, expires=time.time() + 600)
         return self.issuer_url + "/connect?" + urlencode({"request": key})
 
-    async def connect_get(self, request: Request) -> Response:
+    @_offload_storage
+    def connect_get(self, request: Request) -> Response:
         key = request.query_params.get("request", "")
-        pending = self.store.get("pending", key)
+        csrf = secrets.token_urlsafe(32)
+        pending = self.store.update("pending", key, lambda value: {**value, "csrf": digest(csrf)})
         if not pending:
             return HTMLResponse("Connection request expired. Start again in your AI app.", status_code=400, headers=_headers())
-        csrf = secrets.token_urlsafe(32)
-        pending["csrf"] = digest(csrf)
-        self.store.put("pending", key, pending, expires=pending["expires"])
         params = pending["params"]
         options = "".join(f'<option value="{escape(x.origin, quote=True)}">{escape(x.name)} — {escape(x.origin)}</option>' for x in self.institutions.values())
         write = ""
@@ -203,9 +217,12 @@ class CanvasOAuthProvider:
         return response
 
     async def connect_post(self, request: Request) -> Response:
+        form = await request.form()
+        return await anyio.to_thread.run_sync(self._connect_post, request, form)
+
+    def _connect_post(self, request: Request, form) -> Response:
         if request.headers.get("origin") != self.issuer_url:
             return JSONResponse({"error": "invalid_origin"}, status_code=403, headers=_headers())
-        form = await request.form()
         key = str(form.get("request", ""))
         pending = self.store.get("pending", key)
         csrf = str(form.get("csrf", ""))
@@ -254,15 +271,35 @@ class CanvasOAuthProvider:
                 raise ValueError("Canvas did not identify the authenticated user")
             return {"id": str(profile["id"])}
 
+    def _take_upstream(self, state: str, cookie: str):
+        with self.store.transaction():
+            pending = self.store.get("upstream", state)
+            if not pending or not cookie or not hmac.compare_digest(digest(cookie), pending.get("csrf", "")):
+                return None
+            return self.store.consume("upstream", state)
+
+    def _create_grant(self, pending, institution, credential, profile):
+        grant_id = secrets.token_urlsafe(32)
+        expiry = time.time() + GRANT_SECONDS
+        params = pending["params"]
+        with self.store.transaction():
+            self.store.put("grant", grant_id, {"institution": institution.origin, "credential": credential,
+                "user_id": profile["id"], "client_id": pending["client_id"], "scopes": pending["scopes"], "expires": expiry},
+                expires=expiry, owner=grant_id)
+            code = secrets.token_urlsafe(32)
+            authorization = GrantAuthorizationCode(code=code, scopes=pending["scopes"], expires_at=time.time() + 120,
+                client_id=pending["client_id"], code_challenge=params["code_challenge"],
+                redirect_uri=params["redirect_uri"], redirect_uri_provided_explicitly=params["redirect_uri_provided_explicitly"],
+                resource=self.resource_url, grant_id=grant_id)
+            self.store.put("code", code, authorization.model_dump(mode="json"), expires=authorization.expires_at, owner=grant_id)
+            return code
+
     async def canvas_callback(self, request: Request) -> Response:
         state = request.query_params.get("state", "")
-        pending = self.store.get("upstream", state)
         cookie = request.cookies.get(self.cookie_name, "")
-        if not pending or not cookie or not hmac.compare_digest(digest(cookie), pending.get("csrf", "")):
-            return HTMLResponse("Invalid or expired Canvas sign-in. Start again in your AI app.", status_code=400, headers=_headers())
-        pending = self.store.consume("upstream", state)
+        pending = await anyio.to_thread.run_sync(self._take_upstream, state, cookie)
         if not pending:
-            return HTMLResponse("This sign-in has already been used.", status_code=400, headers=_headers())
+            return HTMLResponse("Invalid or expired Canvas sign-in. Start again in your AI app.", status_code=400, headers=_headers())
         params = pending["params"]
         institution = self.institutions[pending["institution"]]
         if request.query_params.get("error") or not request.query_params.get("code"):
@@ -273,108 +310,198 @@ class CanvasOAuthProvider:
             profile = await anyio.to_thread.run_sync(lambda: self._profile(institution, credential["access_token"]))
         except Exception:
             return HTMLResponse("Canvas sign-in could not be verified. Start again or contact your institution’s administrator.", status_code=502, headers=_headers())
-        grant_id = secrets.token_urlsafe(32)
-        expiry = time.time() + GRANT_SECONDS
-        self.store.put("grant", grant_id, {"institution": institution.origin, "credential": credential,
-            "user_id": profile["id"], "client_id": pending["client_id"], "scopes": pending["scopes"], "expires": expiry},
-            expires=expiry, owner=grant_id)
-        code = secrets.token_urlsafe(32)
-        authorization = GrantAuthorizationCode(code=code, scopes=pending["scopes"], expires_at=time.time() + 120,
-            client_id=pending["client_id"], code_challenge=params["code_challenge"],
-            redirect_uri=params["redirect_uri"], redirect_uri_provided_explicitly=params["redirect_uri_provided_explicitly"],
-            resource=self.resource_url, grant_id=grant_id)
-        self.store.put("code", code, authorization.model_dump(mode="json"), expires=authorization.expires_at, owner=grant_id)
+        code = await anyio.to_thread.run_sync(self._create_grant, pending, institution, credential, profile)
         response = RedirectResponse(_redirect(params["redirect_uri"], {"code": code, "state": params.get("state"), "iss": self.issuer_url}), status_code=303, headers=_headers())
         response.delete_cookie(self.cookie_name, path="/", secure=self.secure_cookie, httponly=True, samesite="lax")
         return response
 
-    async def load_authorization_code(self, client: OAuthClientInformationFull, authorization_code: str):
+    @_offload_storage
+    def load_authorization_code(self, client: OAuthClientInformationFull, authorization_code: str):
         data = self.store.get("code", authorization_code)
         if not data or data["client_id"] != client.client_id or not self.store.get("grant", data["grant_id"]):
             return None
         return GrantAuthorizationCode.model_validate(data)
 
     def _issue(self, *, grant_id: str, client_id: str, scopes: list[str]) -> OAuthToken:
-        grant = self.store.get("grant", grant_id)
-        if not grant or grant["client_id"] != client_id or set(scopes) - set(grant["scopes"]):
-            raise TokenError("invalid_grant", "Grant is no longer valid")
-        access_key, refresh_key = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
-        expires = min(int(time.time()) + ACCESS_SECONDS, int(grant["expires"]))
-        access = GrantAccessToken(token=access_key, client_id=client_id, scopes=scopes,
-            expires_at=expires, resource=self.resource_url, grant_id=grant_id)
-        refresh = GrantRefreshToken(token=refresh_key, client_id=client_id, scopes=scopes,
-            expires_at=int(grant["expires"]), resource=self.resource_url, grant_id=grant_id, access_digest_key=access_key)
-        self.store.put("access", access_key, access.model_dump(mode="json"), expires=expires, owner=grant_id)
-        self.store.put("refresh", refresh_key, refresh.model_dump(mode="json"), expires=grant["expires"], owner=grant_id)
-        return OAuthToken(access_token=access_key, refresh_token=refresh_key,
-            expires_in=max(0, expires - int(time.time())), scope=" ".join(scopes))
+        # Grant validation and both token rows commit together. A concurrent
+        # revocation can happen before or after this transaction, never between.
+        with self.store.transaction():
+            grant = self.store.get("grant", grant_id)
+            if not grant or grant["client_id"] != client_id or set(scopes) - set(grant["scopes"]):
+                raise TokenError("invalid_grant", "Grant is no longer valid")
+            access_key, refresh_key = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+            expires = min(int(time.time()) + ACCESS_SECONDS, int(grant["expires"]))
+            access = GrantAccessToken(token=access_key, client_id=client_id, scopes=scopes,
+                expires_at=expires, resource=self.resource_url, grant_id=grant_id)
+            refresh = GrantRefreshToken(token=refresh_key, client_id=client_id, scopes=scopes,
+                expires_at=int(grant["expires"]), resource=self.resource_url, grant_id=grant_id, access_digest_key=access_key)
+            self.store.put("access", access_key, access.model_dump(mode="json"), expires=expires, owner=grant_id)
+            self.store.put("refresh", refresh_key, refresh.model_dump(mode="json"), expires=grant["expires"], owner=grant_id)
+            return OAuthToken(access_token=access_key, refresh_token=refresh_key,
+                expires_in=max(0, expires - int(time.time())), scope=" ".join(scopes))
 
-    async def exchange_authorization_code(self, client, authorization_code):
-        data = self.store.consume("code", authorization_code.code)
-        if not data or data["client_id"] != client.client_id or data["resource"] != self.resource_url:
-            raise TokenError("invalid_grant", "Authorization code is expired or already used")
-        return self._issue(grant_id=data["grant_id"], client_id=data["client_id"], scopes=data["scopes"])
+    @_offload_storage
+    def exchange_authorization_code(self, client, authorization_code):
+        with self.store.transaction():
+            data = self.store.consume("code", authorization_code.code)
+            if not data or data["client_id"] != client.client_id or data["resource"] != self.resource_url:
+                raise TokenError("invalid_grant", "Authorization code is expired or already used")
+            return self._issue(grant_id=data["grant_id"], client_id=data["client_id"], scopes=data["scopes"])
 
-    async def load_refresh_token(self, client, refresh_token):
-        spent = self.store.get("spent_refresh", refresh_token)
-        if spent and spent["client_id"] == client.client_id:
-            # A rotated token reused by this client indicates a copied token or
-            # concurrent refresh. Revoke the entire family; require reconnect.
-            self.store.revoke_owner(spent["grant_id"])
-            return None
-        data = self.store.get("refresh", refresh_token)
-        if not data or data["client_id"] != client.client_id or not self.store.get("grant", data["grant_id"]):
-            return None
-        return GrantRefreshToken.model_validate(data)
+    @_offload_storage
+    def load_refresh_token(self, client, refresh_token):
+        with self.store.transaction():
+            spent = self.store.get("spent_refresh", refresh_token)
+            if spent and spent["client_id"] == client.client_id:
+                # Reuse revokes the entire family even if another worker won
+                # the rotation. Returning None commits this revocation.
+                self.store.revoke_owner(spent["grant_id"])
+                return None
+            data = self.store.get("refresh", refresh_token)
+            if not data or data["client_id"] != client.client_id or not self.store.get("grant", data["grant_id"]):
+                return None
+            return GrantRefreshToken.model_validate(data)
 
-    async def exchange_refresh_token(self, client, refresh_token, scopes):
+    @_offload_storage
+    def exchange_refresh_token(self, client, refresh_token, scopes):
         if set(scopes) - set(refresh_token.scopes) or "canvas:read" not in scopes:
             raise TokenError("invalid_scope", "Cannot expand scopes during refresh")
-        data = self.store.consume("refresh", refresh_token.token)
-        if not data or data["client_id"] != client.client_id or data["resource"] != self.resource_url:
+        result = None
+        with self.store.transaction():
+            data = self.store.get("refresh", refresh_token.token)
+            if data and data["client_id"] == client.client_id and data["resource"] == self.resource_url:
+                if set(scopes) - set(data["scopes"]):
+                    raise TokenError("invalid_scope", "Cannot expand scopes during refresh")
+                self.store.consume("refresh", refresh_token.token)
+                self.store.put("spent_refresh", refresh_token.token,
+                    {"grant_id": data["grant_id"], "client_id": data["client_id"]},
+                    expires=data["expires_at"], owner=data["grant_id"])
+                self.store.delete("access", data["access_digest_key"])
+                result = self._issue(grant_id=data["grant_id"], client_id=data["client_id"], scopes=scopes)
+            else:
+                spent = self.store.get("spent_refresh", refresh_token.token)
+                if spent and spent["client_id"] == client.client_id:
+                    self.store.revoke_owner(spent["grant_id"])
+        # Raise after committing a replay-triggered family revocation.
+        if result is None:
             raise TokenError("invalid_grant", "Refresh token is expired or already used")
-        self.store.put("spent_refresh", refresh_token.token,
-            {"grant_id": data["grant_id"], "client_id": data["client_id"]},
-            expires=data["expires_at"], owner=data["grant_id"])
-        self.store.delete("access", data["access_digest_key"])
-        return self._issue(grant_id=data["grant_id"], client_id=data["client_id"], scopes=scopes)
+        return result
+
+    def validate_access(self, token: str) -> GrantAccessToken | None:
+        """Synchronously revalidate identity/scopes immediately before dispatch."""
+        with self.store.transaction():
+            data = self.store.get("access", token)
+            if not data or data["resource"] != self.resource_url:
+                return None
+            grant = self.store.get("grant", data["grant_id"])
+            if (not grant or grant["client_id"] != data["client_id"]
+                    or set(data["scopes"]) - set(grant["scopes"])
+                    or grant["institution"] not in self.institutions):
+                return None
+            return GrantAccessToken.model_validate(data)
 
     async def load_access_token(self, token: str) -> GrantAccessToken | None:
-        data = self.store.get("access", token)
-        if not data or data["resource"] != self.resource_url or not self.store.get("grant", data["grant_id"]):
-            return None
-        return GrantAccessToken.model_validate(data)
+        return await anyio.to_thread.run_sync(self.validate_access, token)
 
-    async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
+    @_offload_storage
+    def revoke_token(self, token: AccessToken | RefreshToken) -> None:
         grant_id = getattr(token, "grant_id", None)
         if grant_id:
             self.store.revoke_owner(grant_id)
 
-    async def get_credentials(self, access_token: str | AccessToken) -> CanvasConfig:
-        token = access_token if isinstance(access_token, str) else access_token.token
-        access = await self.load_access_token(token)
-        if not access:
-            raise PermissionError("Connection expired or was revoked")
-        async with self.refresh_lock:
-            grant = self.store.get("grant", access.grant_id)
-            if not grant:
-                raise PermissionError("Connection expired or was revoked")
-            institution = self.institutions.get(grant["institution"])
+    def _refresh_snapshot(self, grant_id: str, lease):
+        with self.store.transaction():
+            record = self.store.record("grant", grant_id)
+            if not record or not self.store.lease_valid(lease):
+                raise PermissionError("Connection was revoked or refresh ownership changed")
+            credential = record.value["credential"]
+            if credential["expires_at"] > time.time() + 60:
+                return None
+            institution = self.institutions.get(record.value["institution"])
             if not institution:
                 raise PermissionError("Institution is no longer configured")
-            credential = grant["credential"]
-            if credential["expires_at"] <= time.time() + 60:
-                if not credential.get("refresh_token"):
-                    raise PermissionError("Canvas authorization expired. Reconnect your account.")
+            if not credential.get("refresh_token"):
+                raise PermissionError("Canvas authorization expired. Reconnect your account.")
+            return record, credential, institution
+
+    def _install_refreshed(self, grant_id, lease, record, refreshed):
+        grant = record.value
+        grant["credential"] = refreshed
+        with self.store.transaction():
+            if not self.store.lease_valid(lease):
+                raise PermissionError("Connection was revoked or refresh ownership changed")
+            if not self.store.compare_and_swap("grant", grant_id, record.version, grant):
+                raise PermissionError("Connection was revoked or changed during refresh")
+
+    async def _refresh_canvas_credentials(self, grant_id: str, lease) -> None:
+        snapshot = await anyio.to_thread.run_sync(self._refresh_snapshot, grant_id, lease)
+        if snapshot is None:
+            return
+        record, credential, institution = snapshot
+        finished, lost = asyncio.Event(), asyncio.Event()
+
+        async def heartbeat():
+            while not finished.is_set():
                 try:
-                    refreshed = await anyio.to_thread.run_sync(lambda: self._canvas_token(institution, {
-                        "grant_type": "refresh_token", "refresh_token": credential["refresh_token"]}))
-                except Exception:
-                    raise PermissionError("Canvas authorization could not be refreshed. Reconnect your account.") from None
-                refreshed["refresh_token"] = refreshed.get("refresh_token") or credential["refresh_token"]
-                grant["credential"] = credential = refreshed
-                # A concurrent disconnect must not be undone by refresh.
-                if not self.store.get("grant", access.grant_id):
-                    raise PermissionError("Connection was revoked")
-                self.store.put("grant", access.grant_id, grant, expires=grant["expires"], owner=access.grant_id)
-        return CanvasConfig(base_url=grant["institution"], token=credential["access_token"])
+                    await asyncio.wait_for(finished.wait(), timeout=10)
+                except TimeoutError:
+                    try:
+                        renewed = await anyio.to_thread.run_sync(lambda: self.store.renew_lease(lease, ttl=45))
+                    except Exception:
+                        renewed = False
+                    if not renewed:
+                        lost.set()
+                        return
+
+        heartbeat_task = asyncio.create_task(heartbeat())
+        try:
+            try:
+                refreshed = await anyio.to_thread.run_sync(lambda: self._canvas_token(institution, {
+                    "grant_type": "refresh_token", "refresh_token": credential["refresh_token"]}))
+            except Exception:
+                raise PermissionError("Canvas authorization could not be refreshed. Reconnect your account.") from None
+            refreshed["refresh_token"] = refreshed.get("refresh_token") or credential["refresh_token"]
+            if lost.is_set():
+                raise PermissionError("Refresh ownership changed")
+            await anyio.to_thread.run_sync(self._install_refreshed, grant_id, lease, record, refreshed)
+        finally:
+            finished.set()
+            heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat_task
+
+    def _credential_state(self, token):
+        with self.store.transaction():
+            access = self.store.get("access", token)
+            if not access or access["resource"] != self.resource_url:
+                raise PermissionError("Connection expired or was revoked")
+            grant_id = access["grant_id"]
+            grant = self.store.get("grant", grant_id)
+            if not grant:
+                raise PermissionError("Connection expired or was revoked")
+            if grant["institution"] not in self.institutions:
+                raise PermissionError("Institution is no longer configured")
+            credential = grant["credential"]
+            if credential["expires_at"] > time.time() + 60:
+                return CanvasConfig(base_url=grant["institution"], token=credential["access_token"]), grant_id, None
+            lease = self.store.acquire_lease("canvas_refresh", grant_id, ttl=45, owner=grant_id)
+            return None, grant_id, lease
+
+    async def get_credentials(self, access_token: str | AccessToken) -> CanvasConfig:
+        token = access_token if isinstance(access_token, str) else access_token.token
+        deadline = time.monotonic() + 90
+        while True:
+            config, grant_id, lease = await anyio.to_thread.run_sync(self._credential_state, token)
+            if config is not None:
+                return config
+            if lease is not None:
+                try:
+                    await self._refresh_canvas_credentials(grant_id, lease)
+                finally:
+                    await anyio.to_thread.run_sync(self.store.release_lease, lease)
+                # Revalidate this MCP token after refresh. Its grant may remain
+                # valid while this particular token was rotated/revoked.
+                continue
+            if time.monotonic() >= deadline:
+                raise PermissionError("Another worker is refreshing this connection. Try again shortly.")
+            await asyncio.sleep(0.05)

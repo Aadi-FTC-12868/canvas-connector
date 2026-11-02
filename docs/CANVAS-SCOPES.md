@@ -1,6 +1,6 @@
 # Canvas developer-key scope manifest
 
-This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
+This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py` and `student_actions.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
 
 Canvas developer-key scopes use the exact route-template spelling below. For example, an API call containing `self` can correspond to a scope containing `:user_id`; keep Canvas's documented placeholder names rather than substituting real IDs. These upstream scopes are separate from this connector's `canvas:read` and `canvas:write` grants. An institutional administrator enables the upstream scopes. See [Canvas developer-key configuration](https://developerdocs.instructure.com/services/canvas/oauth2/file.developer_keys).
 
@@ -86,9 +86,25 @@ url:GET|/api/v1/planner_notes/:id
 url:POST|/api/v1/planner/overrides
 url:PUT|/api/v1/planner/overrides/:id
 url:GET|/api/v1/planner/overrides/:id
+url:GET|/api/v1/courses/:course_id/discussion_topics/:topic_id/view
+url:PUT|/api/v1/courses/:course_id/discussion_topics/:topic_id/entries/:entry_id
+url:DELETE|/api/v1/courses/:course_id/discussion_topics/:topic_id/entries/:entry_id
+url:PUT|/api/v1/courses/:course_id/discussion_topics/:topic_id/subscribed
+url:DELETE|/api/v1/courses/:course_id/discussion_topics/:topic_id/subscribed
+url:PUT|/api/v1/courses/:course_id/discussion_topics/:topic_id/read
+url:DELETE|/api/v1/courses/:course_id/discussion_topics/:topic_id/read
+url:PUT|/api/v1/courses/:course_id/discussion_topics/:topic_id/entries/:entry_id/read
+url:DELETE|/api/v1/courses/:course_id/discussion_topics/:topic_id/entries/:entry_id/read
+url:POST|/api/v1/courses/:course_id/discussion_topics/:topic_id/entries/:entry_id/rating
+url:PUT|/api/v1/courses/:course_id/assignments/:assignment_id/submissions/:user_id/comments/:id
+url:DELETE|/api/v1/courses/:course_id/assignments/:assignment_id/submissions/:user_id/comments/:id
+url:POST|/api/v1/calendar_events
+url:GET|/api/v1/calendar_events/:id
+url:PUT|/api/v1/calendar_events/:id
+url:DELETE|/api/v1/calendar_events/:id
 ```
 
-Sources: [personal file uploads](https://developerdocs.instructure.com/services/canvas/resources/users), [submission uploads and comments](https://developerdocs.instructure.com/services/canvas/resources/submissions), [discussion posts and readback](https://developerdocs.instructure.com/services/canvas/resources/discussion_topics), [messages](https://developerdocs.instructure.com/services/canvas/resources/conversations), [planner actions](https://developerdocs.instructure.com/services/canvas/resources/planner).
+Sources: [personal file uploads](https://developerdocs.instructure.com/services/canvas/resources/users), [submission uploads and comments](https://developerdocs.instructure.com/services/canvas/resources/submissions), [discussion posts and readback](https://developerdocs.instructure.com/services/canvas/resources/discussion_topics), [messages](https://developerdocs.instructure.com/services/canvas/resources/conversations), [planner actions](https://developerdocs.instructure.com/services/canvas/resources/planner), [personal calendar actions](https://developerdocs.instructure.com/services/canvas/resources/calendar_events), [comment editing](https://developerdocs.instructure.com/services/canvas/resources/submission_comments).
 
 Upload finalization follows Canvas's validated returned confirmation URL. Some installations use an older `create_success` confirmation route. The static list above does not claim to enumerate every installation-specific finalization permission; exercise a small upload in a test course with the exact developer key before enabling uploads publicly. Do not broaden the key to unrelated administration endpoints to hide a denied call.
 

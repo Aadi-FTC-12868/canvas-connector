@@ -1,4 +1,4 @@
-# Tested dependency versions for Python 3.12. Install local packages in the same pip command.
+# Development and validation dependencies; Python 3.12. Local packages installed alongside.
 annotated-types==0.8.0
 anyio==4.16.0
 attrs==26.1.0
@@ -21,6 +21,8 @@ mcp==1.27.0
 packaging==26.3
 pillow==12.3.0
 pluggy==1.7.0
+psycopg==3.3.6
+psycopg-binary==3.3.6
 pycparser==3.12
 pydantic==2.14.2
 pydantic-settings==2.16.2

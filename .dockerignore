@@ -3,6 +3,7 @@
 !README.md
 !LICENSE
 !requirements.lock
+!requirements-runtime.lock
 !packages/
 !packages/canvas-py/
 !packages/canvas-py/pyproject.toml

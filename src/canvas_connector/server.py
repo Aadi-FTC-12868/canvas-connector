@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import time
 from collections import OrderedDict
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlsplit
 
 import anyio
@@ -24,6 +25,7 @@ from starlette.staticfiles import StaticFiles
 
 from .tools import register_tools
 from .actions import ActionStore
+from .responses import ResponseStore
 
 INSTRUCTIONS = (
     "Use canvas_dashboard, then course home and sections, then open the returned item routes. "
@@ -43,6 +45,7 @@ class Principal:
     canvas: Canvas
     grant_id: str
     scopes: list[str]
+    validate_access: Callable[[], Any] | None = None
 
 
 _principal: ContextVar[Principal | None] = ContextVar("canvas_principal", default=None)
@@ -62,7 +65,11 @@ def current_principal() -> Principal:
 
 
 def _authorize_write() -> None:
-    if "canvas:write" not in current_principal().scopes:
+    principal = current_principal()
+    access = principal.validate_access() if principal.validate_access is not None else None
+    if principal.validate_access is not None and (access is None or access.grant_id != principal.grant_id):
+        raise PermissionError("This connection expired or was revoked. Reconnect before writing.")
+    if "canvas:write" not in (access.scopes if access is not None else principal.scopes):
         raise PermissionError("This connection is read-only. Reconnect with write access to enable actions.")
 
 
@@ -99,7 +106,8 @@ class AccountContextMiddleware:
             )
             await response(scope, receive, send)
             return
-        context_token = _principal.set(Principal(canvas, access.grant_id, access.scopes))
+        context_token = _principal.set(Principal(canvas, access.grant_id, access.scopes,
+            validate_access=lambda: self.provider.validate_access(access.token)))
         try:
             await self.app(scope, receive, send)
         finally:
@@ -133,16 +141,22 @@ class RequestLimitsMiddleware:
                 access = await self.provider.load_access_token(auth[7:])
                 if access is not None:
                     client = "grant:" + access.grant_id
-        key, now = (client, route), time.monotonic()
-        started, count = self.windows.get(key, (now, 0))
-        if now - started >= 60:
-            started, count = now, 0
-        self.windows[key] = (started, count + 1)
-        self.windows.move_to_end(key)
-        while len(self.windows) > 2048:
-            self.windows.popitem(last=False)
-        if count >= (600 if route == "mcp" else 120):
-            await JSONResponse({"error": "rate_limited"}, 429, headers={"Retry-After": "60"})(scope, receive, send)
+        limit = 600 if route == "mcp" else 120
+        if self.provider is not None:
+            allowed, retry = await anyio.to_thread.run_sync(
+                lambda: self.provider.store.increment_window(f"{route}:{client}", limit=limit, period=60))
+        else:
+            key, now = (client, route), time.monotonic()
+            started, count = self.windows.get(key, (now, 0))
+            if now - started >= 60:
+                started, count = now, 0
+            self.windows[key] = (started, count + 1)
+            self.windows.move_to_end(key)
+            while len(self.windows) > 2048:
+                self.windows.popitem(last=False)
+            allowed, retry = count < limit, 60
+        if not allowed:
+            await JSONResponse({"error": "rate_limited"}, 429, headers={"Retry-After": str(max(1, math.ceil(retry)))})(scope, receive, send)
             return
         async with self.limiter:
             await self.handle(scope, receive, send, route)
@@ -227,7 +241,8 @@ def create_http_app(provider: Any):
     _private_logging()
     register_tools(server, lambda: current_principal().canvas, _authorize_write,
                    owner=lambda: current_principal().grant_id,
-                   store=ActionStore(bind_credentials=False, persistence=provider.store))
+                   store=ActionStore(bind_credentials=False, persistence=provider.store),
+                   responses=ResponseStore(persistence=provider.store))
     app = server.streamable_http_app()
 
     async def health(request):

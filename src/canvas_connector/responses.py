@@ -166,8 +166,9 @@ def window(items: list[Any], offset: int, limit: int) -> tuple[list[Any], dict[s
 
 class ResponseStore:
     """Tenant-bound, bounded continuations for unusually large structured results."""
-    def __init__(self, *, ttl: float = 600, budget: int = 16 * 1024 * 1024, inline_chars: int = 60000):
+    def __init__(self, *, ttl: float = 600, budget: int = 16 * 1024 * 1024, inline_chars: int = 60000, persistence: Any = None):
         self.ttl, self.budget, self.inline_chars = ttl, budget, inline_chars
+        self.persistence = persistence
         self.records: dict[str, dict] = {}
         self.lock = threading.RLock()
 
@@ -180,24 +181,39 @@ class ResponseStore:
         if len(encoded) <= self.inline_chars:
             return result
         byte_count = len(encoded.encode())
-        with self.lock:
-            now = time.monotonic()
-            self.records = {k: v for k, v in self.records.items() if v["expires"] > now}
-            used = sum(r["bytes"] for r in self.records.values())
-            if byte_count > self.budget or used + byte_count > self.budget:
-                return envelope(status="result_too_large", coverage={"complete": False},
-                    errors=[{"code": "result_too_large", "message": "Narrow the request or reduce list/document limits; result was not presented as complete."}])
-            key = uuid.uuid4().hex
-            self.records[key] = {"owner": owner, "text": encoded, "bytes": byte_count,
-                                 "sha256": hashlib.sha256(encoded.encode()).hexdigest(), "expires": now + self.ttl}
+        key = uuid.uuid4().hex
+        now = time.time()
+        record = {"owner": owner, "text": encoded, "bytes": byte_count,
+                  "sha256": hashlib.sha256(encoded.encode()).hexdigest(), "expires": now + self.ttl}
+        if self.persistence is not None:
+            # Budget and payload commit together across workers. Separate metadata
+            # avoids decrypting every course result merely to count stored bytes.
+            with self.persistence.transaction():
+                used = sum(row.value["bytes"] for row in self.persistence.scan("response_budget"))
+                if byte_count > self.budget or used + byte_count > self.budget:
+                    return self._too_large()
+                self.persistence.put("response", key, record, expires=record["expires"], owner=owner)
+                self.persistence.put("response_budget", key, {"bytes": byte_count}, expires=record["expires"], owner=owner)
+        else:
+            with self.lock:
+                self.records = {k: v for k, v in self.records.items() if v["expires"] > now}
+                used = sum(r["bytes"] for r in self.records.values())
+                if byte_count > self.budget or used + byte_count > self.budget:
+                    return self._too_large()
+                self.records[key] = record
         return self.read(owner, key, 0, 40000)
+
+    @staticmethod
+    def _too_large() -> dict:
+        return envelope(status="result_too_large", coverage={"complete": False},
+            errors=[{"code": "result_too_large", "message": "Narrow the request or reduce list/document limits; result was not presented as complete."}])
 
     def read(self, owner: str, result_id: str, offset: int = 0, max_chars: int = 40000) -> dict:
         if type(offset) is not int or type(max_chars) is not int or offset < 0 or not 1 <= max_chars <= 40000:
             raise ValueError("offset must be nonnegative; max_chars must be 1..40000")
         with self.lock:
-            r = self.records.get(result_id)
-            if not r or r["owner"] != owner or r["expires"] <= time.monotonic():
+            r = (self.persistence.get("response", result_id) if self.persistence is not None else self.records.get(result_id))
+            if not r or r["owner"] != owner or r["expires"] <= time.time():
                 raise ValueError("Result continuation expired or is unavailable for this account; repeat the source read")
             total = len(r["text"])
             if offset > total:

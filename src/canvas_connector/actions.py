@@ -27,6 +27,7 @@ from canvas_py.endpoints.file_uploads import UploadContext
 from canvas_py.endpoints.submissions import SubmitFileUpload
 
 from .responses import dump
+from . import student_actions
 
 PositiveId = Annotated[int, Field(gt=0, strict=True)]
 Text = Annotated[str, Field(min_length=1, max_length=100_000)]
@@ -167,17 +168,19 @@ class Upload(ActionModel):
 
 ActionRequest = Annotated[Union[SubmitText, SubmitURL, SubmitFiles, SubmissionComment,
     DiscussionPost, DiscussionReply, InboxSend, InboxReply, InboxUpdate,
-    PlannerCreate, PlannerUpdate, PlannerDelete, PlannerOverride, Upload], Field(discriminator="kind")]
+    PlannerCreate, PlannerUpdate, PlannerDelete, PlannerOverride, Upload,
+    student_actions.StudentActionTypes], Field(discriminator="kind")]
 ACTION_ADAPTER = TypeAdapter(ActionRequest)
 ACTION_KINDS = ["upload", "submit_files", "submit_text", "submit_url", "submission_comment",
                 "discussion_post", "discussion_reply", "inbox_send", "inbox_reply", "inbox_update",
-                "planner_create", "planner_update", "planner_delete", "planner_override"]
+                "planner_create", "planner_update", "planner_delete", "planner_override", *student_actions.KINDS]
 EXECUTE_ROUTES = {"upload": "canvas_upload_file", "submission_comment": "canvas_add_submission_comment",
     **{kind: "canvas_submit_assignment" for kind in ("submit_files", "submit_text", "submit_url")},
     **{kind: "canvas_post_discussion" for kind in ("discussion_post", "discussion_reply")},
     **{kind: "canvas_send_message" for kind in ("inbox_send", "inbox_reply")},
     "inbox_update": "canvas_update_inbox",
-    **{kind: "canvas_update_planner" for kind in ("planner_create", "planner_update", "planner_delete", "planner_override")}}
+    **{kind: "canvas_update_planner" for kind in ("planner_create", "planner_update", "planner_delete", "planner_override")},
+    **student_actions.ROUTES}
 
 
 class Request(CanvasRequest[Any]):
@@ -235,32 +238,52 @@ def _assignment(canvas: Canvas, p: dict, submission_type: str | None) -> dict:
 
 
 class ActionStore:
+    """Transactional prepared-action state machine, shared safely by workers.
+
+    A claimed action never becomes runnable again. Heartbeats extend an execution
+    lease; an expired lease becomes uncertain, including after a process crash.
+    All mutations compare the current durable state under a storage transaction.
+    """
     def __init__(self, *, ttl: float = 600, capacity: int = 256, max_bytes: int = 64 * 1024 * 1024,
                  bind_credentials: bool = True, persistence: Any = None, retention: float = 7 * 86400,
-                 per_owner_capacity: int = 32):
+                 per_owner_capacity: int = 32, execution_lease: float = 120,
+                 heartbeat_interval: float | None = None, max_execution_seconds: float = 1800):
+        if min(ttl, retention, execution_lease, max_execution_seconds) <= 0:
+            raise ValueError("Action timeouts must be positive")
+        heartbeat_interval = heartbeat_interval or min(30.0, execution_lease / 3)
+        if not 0 < heartbeat_interval < execution_lease:
+            raise ValueError("heartbeat_interval must be shorter than execution_lease")
+        if retention <= ttl + max_execution_seconds or max_execution_seconds < execution_lease:
+            raise ValueError("Retention must outlive preparation plus execution; execution deadline must cover its lease")
         self.ttl, self.capacity, self.max_bytes = ttl, capacity, max_bytes
         self.bind_credentials = bind_credentials
         self.persistence, self.retention, self.per_owner_capacity = persistence, retention, per_owner_capacity
-        self.instance = uuid.uuid4().hex
+        self.execution_lease = execution_lease
+        self.heartbeat_interval = heartbeat_interval
+        self.max_execution_seconds = max_execution_seconds
         self.records: dict[str, dict] = {}
         self.lock = threading.RLock()
 
     @contextmanager
-    def _preparation_transaction(self):
-        """Serialize deduplication and preparation across SQLite connections."""
-        if self.persistence is None:
-            yield
-            return
-        with self.persistence.lock:
-            self.persistence.db.execute("BEGIN IMMEDIATE")
-            try:
+    def _atomic(self):
+        """One cross-worker transaction; never hold this around Canvas I/O."""
+        with self.lock:
+            if self.persistence is None:
                 yield
-                self.persistence.db.execute("COMMIT")
-            except BaseException:
-                self.persistence.db.execute("ROLLBACK")
-                raise
+            else:
+                with self.persistence.transaction():
+                    yield
+
+    def _revoked(self, owner: str) -> bool:
+        return self.persistence is not None and self.persistence.is_owner_revoked(owner)
+
+    def _load(self, action_id: str) -> dict | None:
+        record = (self.persistence.get("canvas_action", action_id) if self.persistence is not None
+                  else self.records.get(action_id))
+        return copy.deepcopy(record) if record is not None else None
 
     def _save(self, record: dict) -> None:
+        # Every caller holds _atomic, including expiry, cancellation and heartbeat.
         if self.persistence is not None:
             saved = dict(record)
             saved["payload"] = ""
@@ -268,72 +291,75 @@ class ActionStore:
                 self.persistence.put("canvas_action_payload", record["id"], {"payload": record["payload"]},
                                      expires=record["expires"], owner=record["tenant"])
             elif record["state"] not in {"prepared", "executing"}:
-                self.persistence.delete("canvas_action_payload", record["id"])
-                self.persistence.delete("canvas_action_pending", record["id"])
+                for kind in ("canvas_action_payload", "canvas_action_pending", "canvas_action_claim"):
+                    self.persistence.delete(kind, record["id"])
             self.persistence.put("canvas_action", record["id"], saved,
                                  expires=record["retain_until"], owner=record["tenant"])
-        # Avoid a second unbounded in-memory cache in persistent deployments.
         else:
-            self.records[record["id"]] = record
+            self.records[record["id"]] = copy.deepcopy(record)
 
     def _fingerprint_record(self, fingerprint: str) -> dict | None:
         if self.persistence is not None:
             index = self.persistence.get("canvas_action_index", fingerprint)
-            return self.persistence.get("canvas_action", index["action_id"]) if index else None
-        return next((r for r in self.records.values() if r["fingerprint"] == fingerprint), None)
+            return self._load(index["action_id"]) if index else None
+        return next((copy.deepcopy(r) for r in reversed(list(self.records.values()))
+                     if r["fingerprint"] == fingerprint), None)
+
+    def _intent_record(self, identity: str, intent_id: str) -> dict | None:
+        key = hashlib.sha256((identity + "\0" + intent_id).encode()).hexdigest()
+        if self.persistence is not None:
+            index = self.persistence.get("canvas_action_intent", key)
+            return self._load(index["action_id"]) if index else None
+        return next((copy.deepcopy(r) for r in self.records.values()
+                     if r["owner"] == identity and r.get("intent_id") == intent_id), None)
 
     def _preparation_capacity(self, owner: str, encoded: str) -> None:
         now = time.time()
         if self.persistence is not None:
-            # The encrypted payload is never logged. Bound live preparations
-            # separately from retained terminal receipts, which have no bytes.
-            rows = self.persistence.db.execute(
-                "SELECT owner,payload FROM records WHERE kind='canvas_action_pending' AND expires>?", (now,)).fetchall()
-            if len(rows) >= self.capacity or sum(row[0] == owner for row in rows) >= self.per_owner_capacity:
+            pending = self.persistence.scan("canvas_action_pending")
+            if len(pending) >= self.capacity or sum(r.owner == owner for r in pending) >= self.per_owner_capacity:
                 raise ValueError("Too many pending actions. Cancel unneeded preparations or wait for expiry.")
-            used = sum(json.loads(self.persistence.cipher.decrypt(row[1]))["bytes"] for row in rows)
-            if used + len(encoded) > self.max_bytes:
+            if sum(r.value["bytes"] for r in pending) + len(encoded) > self.max_bytes:
                 raise ValueError("Pending action byte capacity reached; cancel unneeded preparations or wait for expiry.")
             return
-        else:
-            self.records = {k: r for k, r in self.records.items() if r["retain_until"] > now}
-            records = list(self.records.values())
-        active = [r for r in records if r["state"] in {"prepared", "executing"} and r["expires"] > now]
-        owned = [r for r in active if r["tenant"] == owner]
-        if len(active) >= self.capacity or len(owned) >= self.per_owner_capacity:
+        self.records = {k: r for k, r in self.records.items() if r["retain_until"] > now}
+        active = [r for r in self.records.values() if
+                  (r["state"] == "prepared" and r["expires"] > now) or
+                  (r["state"] == "executing" and r.get("lease_expires", 0) > now)]
+        if len(active) >= self.capacity or sum(r["tenant"] == owner for r in active) >= self.per_owner_capacity:
             raise ValueError("Too many pending actions. Cancel unneeded preparations or wait for expiry.")
-        if sum(len(r["payload"]) for r in active) + len(encoded) > self.max_bytes:
+        if sum(r.get("payload_bytes", len(r["payload"])) for r in active) + len(encoded) > self.max_bytes:
             raise ValueError("Pending action byte capacity reached; cancel unneeded preparations or wait for expiry.")
-        if self.persistence is None and len(records) >= 20000:
+        if len(self.records) >= 20000:
             raise ValueError("Action history capacity reached; use encrypted persistent storage for sustained service.")
 
     def _identity(self, canvas: Canvas, owner: str) -> str:
-        # Hosted OAuth uses an unforgeable grant identity whose Canvas user and
-        # institution are fixed by auth. Token refresh must preserve receipts.
+        # Hosted grants bind institution + Canvas user; token refresh is not a
+        # new identity. Local deployments default to stricter credential binding.
         account = account_key(canvas) if self.bind_credentials else canvas.config.base_url
         return hashlib.sha256((owner + "\0" + account).encode()).hexdigest()
 
     def _get(self, canvas: Canvas, owner: str, action_id: str) -> dict:
-        record = (self.persistence.get("canvas_action", action_id) if self.persistence is not None
-                  else self.records.get(action_id))
-        if record is None or record["owner"] != self._identity(canvas, owner):
-            raise ValueError("Action not found for this account. After a restart, inspect Canvas before another write.")
+        record = self._load(action_id)
+        if record is None or record["owner"] != self._identity(canvas, owner) or self._revoked(owner):
+            raise ValueError("Action not found for this account. Inspect Canvas before repeating an unknown write.")
         if self.persistence is not None and record["state"] == "prepared":
             staged = self.persistence.get("canvas_action_payload", action_id)
             record["payload"] = staged["payload"] if staged else ""
-        if record["state"] == "prepared" and time.time() >= record["expires"]:
-            record["state"] = "expired"
-            record["payload"] = ""
+        now = time.time()
+        if record["state"] == "prepared" and now >= record["expires"]:
+            record["state"], record["payload"] = "expired", ""
             self._save(record)
         if self.persistence is not None and record["state"] == "prepared" and (
                 not record["payload"] or self.persistence.get("canvas_action_claim", action_id) is None):
+            # Also covers a crash in the earlier nontransactional implementation.
             record["state"], record["payload"] = "uncertain", ""
-            record["result"] = {"verified": False, "message": "Action claim was consumed or staging is missing. Inspect Canvas before retrying."}
+            record["result"] = {"verified": False, "message": "Action staging or claim is missing. Inspect Canvas before retrying."}
             self._save(record)
-        if record["state"] == "executing" and record.get("instance") != self.instance:
+        if record["state"] == "executing" and now >= record.get("lease_expires", 0):
             record["state"], record["payload"] = "uncertain", ""
-            record["result"] = {"verified": False, "upstream_write_attempted": True,
-                                "message": "Execution was interrupted. Inspect Canvas before another write."}
+            record["result"] = {"verified": False, "upstream_write_attempted": record.get("phase") == "dispatching",
+                                "message": "Execution lease expired. The old operation may have reached Canvas; inspect before a new intent."}
             self._save(record)
         return record
 
@@ -341,18 +367,20 @@ class ActionStore:
     def public(record: dict) -> dict:
         return copy.deepcopy({"action_id": record["id"], "kind": record["kind"], "state": record["state"],
                 "review": record["review"], "result": record.get("result"),
+                "intent_id": record.get("intent_id"),
                 "execute": {"tool": EXECUTE_ROUTES[record["kind"]], "action_id": record["id"]},
                 "expires_in_seconds": max(0, round(record["expires"] - time.time())),
+                "execution_lease_seconds": max(0, round(record.get("lease_expires", 0) - time.time())) if record["state"] == "executing" else None,
                 "requires_user_authorization": True, "server_attests_user_consent": False,
                 "receipt_storage": "encrypted_persistent" if record.get("persistent") else "process_local",
-                "retry": "Inspect Canvas before repeating an uncertain or unknown action."})
+                "retry": "Retry this action ID to read its result. A new intent_id permits a repeat only after fresh user authorization and Canvas inspection for uncertain outcomes."})
 
     def status(self, canvas: Canvas, owner: str, action_id: str) -> dict:
-        with self.lock:
+        with self._atomic():
             return self.public(self._get(canvas, owner, action_id))
 
     def cancel(self, canvas: Canvas, owner: str, action_id: str) -> dict:
-        with self.lock:
+        with self._atomic():
             r = self._get(canvas, owner, action_id)
             if r["state"] == "executing":
                 raise ValueError("Action is already executing; inspect the result")
@@ -363,6 +391,8 @@ class ActionStore:
 
     def _snapshot(self, canvas: Canvas, owner: str, p: dict) -> dict:
         kind = p["kind"]
+        if kind in student_actions.KINDS:
+            return student_actions.snapshot(canvas, p)
         if kind in {"submit_text", "submit_url", "submit_files", "submission_comment"} or (kind == "upload" and p["destination"] == "assignment"):
             stype = {"submit_text": "online_text_entry", "submit_url": "online_url", "submit_files": "online_upload", "upload": "online_upload"}.get(kind)
             target = _assignment(canvas, p, stype)
@@ -401,7 +431,7 @@ class ActionStore:
         if len(set(ids)) != len(ids):
             raise ValueError("Upload receipt IDs must be distinct")
         files = []
-        with self.lock:
+        with self._atomic():
             for action_id in ids:
                 r = self._get(canvas, owner, action_id)
                 if r["kind"] != "upload" or r["state"] != "succeeded":
@@ -415,92 +445,202 @@ class ActionStore:
             raise ValueError("Receipts must reference distinct Canvas files")
         return files
 
-    def prepare(self, canvas: Canvas, owner: str, action: ActionRequest | dict) -> dict:
+    def _existing_preparation(self, canvas: Canvas, owner: str, identity: str,
+                              fingerprint: str, intent_id: str | None) -> tuple[dict | None, dict | None]:
+        if self._revoked(owner):
+            raise PermissionError("This Canvas connection was revoked")
+        if intent_id is not None:
+            existing = self._intent_record(identity, intent_id)
+            if existing:
+                if existing["fingerprint"] != fingerprint:
+                    raise ValueError("intent_id was already used for different content or a different target")
+                # Explicit intent keys never silently reset after cancellation or
+                # rejection; a new user intent needs a new key.
+                return self._get(canvas, owner, existing["id"]), None
+        prior = self._fingerprint_record(fingerprint)
+        if prior:
+            prior = self._get(canvas, owner, prior["id"])
+            if intent_id is None and prior["state"] not in {"cancelled", "expired", "rejected"}:
+                return prior, None
+            if intent_id is not None and prior["state"] in {"prepared", "executing"}:
+                raise ValueError("An identical action is still prepared or executing; finish or cancel that action before creating a new intent")
+        return None, prior
+
+    def prepare(self, canvas: Canvas, owner: str, action: ActionRequest | dict,
+                *, intent_id: str | None = None) -> dict:
+        """Stage immutable content. intent_id is a user-authorized intent key.
+
+        Default calls deduplicate identical content. Reuse the same explicit key
+        for retries; use a new key only for a fresh, separately authorized action.
+        A key cannot be rebound to different content during receipt retention.
+        """
+        if intent_id is not None:
+            import re
+            if not isinstance(intent_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", intent_id):
+                raise ValueError("intent_id must be 1..128 letters, digits, dots, underscores, colons or hyphens")
         parsed = ACTION_ADAPTER.validate_python(action)
         p = parsed.model_dump(mode="json")
         encoded = json.dumps(p, sort_keys=True, separators=(",", ":"))
         identity = self._identity(canvas, owner)
         fingerprint = hashlib.sha256((identity + "\0" + encoded).encode()).hexdigest()
-        with self.lock:
-            r = self._fingerprint_record(fingerprint)
-            if r:
-                r = self._get(canvas, owner, r["id"])
-                if r["state"] not in {"cancelled", "expired", "rejected"}:
-                    return self.public(r)
+        with self._atomic():
+            existing, _ = self._existing_preparation(canvas, owner, identity, fingerprint, intent_id)
+            if existing:
+                return self.public(existing)
         snapshot = self._snapshot(canvas, owner, p)
         review = {k: v for k, v in p.items() if k != "content_base64"}
         review.update({"canvas_origin": canvas.config.base_url, "target": snapshot})
+        if intent_id is not None:
+            review["intent"] = {"intent_id": intent_id, "requires_fresh_user_authorization": True,
+                "warning": "This key represents a distinct user-authorized action, not an automatic retry. If an earlier receipt is unknown or uncertain, inspect Canvas first and explicitly authorize the risk of repeating it."}
         if p["kind"] == "upload":
             raw = base64.b64decode(p["content_base64"], validate=True)
             review.update({"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), "effect": "Upload file only; does not submit coursework"})
-        with self.lock, self._preparation_transaction():
-            # Recheck after reads so concurrent preparations collapse to one receipt.
-            previous = self._fingerprint_record(fingerprint)
-            if previous:
-                previous = self._get(canvas, owner, previous["id"])
-                if previous["state"] not in {"cancelled", "expired", "rejected"}:
-                    return self.public(previous)
+        with self._atomic():
+            existing, prior = self._existing_preparation(canvas, owner, identity, fingerprint, intent_id)
+            if existing:
+                return self.public(existing)
             self._preparation_capacity(owner, encoded)
+            if intent_id is not None and prior and prior["state"] in {"succeeded", "uncertain"}:
+                review["repeat_intent"] = {"intent_id": intent_id, "previous_action_id": prior["id"],
+                    "previous_state": prior["state"], "requires_fresh_user_authorization": True,
+                    "warning": "This repeats identical content. The earlier action may already have reached Canvas. Inspect Canvas and obtain fresh user authorization that explicitly covers another submission/message/upload before executing."}
             action_id = uuid.uuid4().hex
-            r = {"id": action_id, "owner": identity, "fingerprint": fingerprint, "payload": encoded,
-                 "kind": p["kind"], "state": "prepared", "review": review, "snapshot": snapshot,
-                 "expires": time.time() + self.ttl, "retain_until": time.time() + self.retention,
-                 "tenant": owner, "persistent": self.persistence is not None, "instance": self.instance}
+            now = time.time()
+            r = {"id": action_id, "owner": identity, "fingerprint": fingerprint, "intent_id": intent_id,
+                 "payload": encoded, "payload_bytes": len(encoded), "kind": p["kind"], "state": "prepared",
+                 "review": review, "snapshot": snapshot, "created_at": now,
+                 "expires": now + self.ttl, "retain_until": now + self.retention,
+                 "tenant": owner, "persistent": self.persistence is not None}
             self._save(r)
             if self.persistence is not None:
                 self.persistence.put("canvas_action_index", fingerprint, {"action_id": action_id},
                                      expires=r["retain_until"], owner=owner)
+                if intent_id is not None:
+                    intent_key = hashlib.sha256((identity + "\0" + intent_id).encode()).hexdigest()
+                    self.persistence.put("canvas_action_intent", intent_key, {"action_id": action_id},
+                                         expires=r["retain_until"], owner=owner)
                 self.persistence.put("canvas_action_claim", action_id, {"owner": identity},
                                      expires=r["retain_until"], owner=owner)
                 self.persistence.put("canvas_action_pending", action_id, {"bytes": len(encoded)},
                                      expires=r["expires"], owner=owner)
             return self.public(r)
 
+    def _pending_lease(self, record: dict) -> None:
+        if self.persistence is not None:
+            self.persistence.put("canvas_action_pending", record["id"], {"bytes": record["payload_bytes"]},
+                                 expires=record["lease_expires"], owner=record["tenant"])
+
+    def _renew_execution(self, canvas: Canvas, owner: str, action_id: str, execution_id: str) -> bool:
+        with self._atomic():
+            try:
+                r = self._get(canvas, owner, action_id)
+            except ValueError:
+                return False
+            if r["state"] != "executing" or r.get("execution_id") != execution_id:
+                return False
+            now = time.time()
+            if now >= r["execution_deadline"]:
+                r["state"], r["payload"] = "uncertain", ""
+                r["result"] = {"verified": False, "upstream_write_attempted": r.get("phase") == "dispatching",
+                               "message": "Execution exceeded its deadline. Inspect Canvas before another action."}
+                self._save(r)
+                return False
+            r["lease_expires"] = min(now + self.execution_lease, r["execution_deadline"])
+            self._save(r)
+            self._pending_lease(r)
+            return True
+
+    @contextmanager
+    def _heartbeat(self, canvas: Canvas, owner: str, action_id: str, execution_id: str):
+        stopped = threading.Event()
+        def run():
+            while not stopped.wait(self.heartbeat_interval):
+                try:
+                    if not self._renew_execution(canvas, owner, action_id, execution_id):
+                        return
+                except Exception:
+                    # A storage failure must never make an expired lease reusable.
+                    # The current executor is fenced again immediately before dispatch.
+                    return
+        heartbeat = threading.Thread(target=run, name="canvas-action-lease", daemon=True)
+        heartbeat.start()
+        try:
+            yield
+        finally:
+            stopped.set()
+            heartbeat.join(timeout=min(5.0, self.execution_lease))
+
+    def _missing_completion(self, original: dict) -> dict:
+        r = dict(original)
+        r["state"], r["payload"] = ("revoked" if self._revoked(r["tenant"]) else "unknown"), ""
+        r["result"] = {"verified": False, "upstream_write_attempted": original.get("phase") == "dispatching",
+                       "message": "The action record or connection is no longer available. No receipt was recreated; inspect Canvas."}
+        return self.public(r)
+
+    def _finish(self, canvas: Canvas, owner: str, original: dict, state: str, result: dict) -> dict:
+        """Conditional terminal transition: never resurrect a removed/revoked row."""
+        with self._atomic():
+            try:
+                current = self._get(canvas, owner, original["id"])
+            except ValueError:
+                return self._missing_completion(original)
+            if current["state"] != "executing" or current.get("execution_id") != original["execution_id"]:
+                return self.public(current)
+            current["state"], current["result"], current["payload"] = state, result, ""
+            self._save(current)
+            return self.public(current)
+
     def execute(self, canvas: Canvas, owner: str, action_id: str, authorize_write: Callable[[], None]) -> dict:
         authorize_write()
-        with self.lock:
+        with self._atomic():
             r = self._get(canvas, owner, action_id)
             if r["state"] != "prepared":
                 return self.public(r)
-            if self.persistence is not None:
-                claim = self.persistence.consume("canvas_action_claim", action_id)
-                if claim is None or claim.get("owner") != r["owner"]:
-                    r["state"], r["payload"] = "uncertain", ""
-                    r["result"] = {"verified": False, "message": "Action was already claimed. Inspect Canvas; do not retry."}
-                    self._save(r)
-                    return self.public(r)
-            # Claim before any I/O: concurrent executes cannot both dispatch.
-            r["state"], r["instance"] = "executing", self.instance
+            # The prepared->executing transition and claim deletion are one
+            # transaction. Cancellation cannot win after this durable claim.
             p = json.loads(r["payload"])
+            now = time.time()
+            r.update(state="executing", phase="preflight", execution_id=uuid.uuid4().hex,
+                     execution_deadline=now + self.max_execution_seconds,
+                     lease_expires=now + self.execution_lease)
+            if self.persistence is not None:
+                self.persistence.delete("canvas_action_claim", action_id)
             self._save(r)
-        try:
-            snapshot = self._snapshot(canvas, owner, p)
-            if snapshot != r["snapshot"]:
-                raise ValueError("Target changed after preparation; prepare a fresh review")
-            if p["kind"] == "submit_files":
-                self._verify_files(canvas, snapshot["files"])
-            if time.time() >= r["expires"]:
-                raise ValueError("Prepared action expired before dispatch")
-            authorize_write()
-        except Exception:
-            with self.lock:
-                r["state"], r["payload"] = "rejected", ""
-                r["result"] = {"verified": False, "upstream_write_attempted": False,
-                               "message": "Preflight failed or target changed. Re-read the target before preparing again."}
-                self._save(r)
-                return self.public(r)
-        try:
-            result = self._perform(canvas, p, snapshot)
-            state = "succeeded"
-        except Exception:
-            # A timeout or failed readback cannot establish that the write failed.
-            result, state = {"verified": False, "upstream_write_attempted": True,
-                             "message": "Outcome uncertain. Inspect Canvas; do not automatically retry."}, "uncertain"
-        with self.lock:
-            r["state"], r["result"], r["payload"] = state, result, ""
-            self._save(r)
+            self._pending_lease(r)
+        with self._heartbeat(canvas, owner, action_id, r["execution_id"]):
+            try:
+                snapshot = self._snapshot(canvas, owner, p)
+                if snapshot != r["snapshot"]:
+                    raise ValueError("Target changed after preparation; prepare a fresh review")
+                if p["kind"] == "submit_files":
+                    self._verify_files(canvas, snapshot["files"])
+                authorize_write()
+            except Exception:
+                return self._finish(canvas, owner, r, "rejected", {"verified": False, "upstream_write_attempted": False,
+                    "message": "Preflight failed or target changed. Re-read the target before preparing again."})
+            with self._atomic():
+                try:
+                    current = self._get(canvas, owner, action_id)
+                except ValueError:
+                    return self._missing_completion(r)
+                if current["state"] != "executing" or current.get("execution_id") != r["execution_id"]:
+                    return self.public(current)
+                if time.time() >= current["expires"]:
+                    return self._finish(canvas, owner, r, "rejected", {"verified": False, "upstream_write_attempted": False,
+                        "message": "Prepared action expired before dispatch; prepare again."})
+                current["phase"] = r["phase"] = "dispatching"
+                current["dispatch_started_at"] = time.time()
+                self._save(current)
+            try:
+                result = self._perform(canvas, p, snapshot)
+                state = "succeeded"
+            except Exception:
+                result, state = {"verified": False, "upstream_write_attempted": True,
+                    "message": "Outcome uncertain. Inspect Canvas; do not automatically retry."}, "uncertain"
+            receipt = self._finish(canvas, owner, r, state, result)
             canvas.navigation.clear_cache()
-            return self.public(r)
+            return receipt
 
     @staticmethod
     def _verify_files(canvas: Canvas, files: list[dict]) -> None:
@@ -516,6 +656,8 @@ class ActionStore:
 
     def _perform(self, canvas: Canvas, p: dict, target: dict) -> dict:
         kind = p["kind"]
+        if kind in student_actions.KINDS:
+            return student_actions.perform(canvas, p, target)
         if kind == "upload":
             raw = base64.b64decode(p["content_base64"], validate=True)
             context = UploadContext.user() if p["destination"] == "user" else UploadContext.assignment_submission(p["course_id"], p["assignment_id"])

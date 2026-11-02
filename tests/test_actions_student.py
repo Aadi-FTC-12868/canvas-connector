@@ -1,6 +1,7 @@
 import base64
 import copy
 import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -313,7 +314,7 @@ def test_two_store_instances_cannot_dispatch_same_claim_twice(tmp_path):
     t = threading.Thread(target=lambda: one.execute(c, "grant", r["action_id"], lambda: None))
     t.start()
     assert started.wait(2)
-    assert two.execute(c, "grant", r["action_id"], lambda: None)["state"] == "uncertain"
+    assert two.execute(c, "grant", r["action_id"], lambda: None)["state"] == "executing"
     finish.set()
     t.join(3)
     c.submissions.submit_text.assert_called_once()
@@ -365,3 +366,241 @@ def test_remaining_action_kinds_confirm_readback(kind):
     else:
         c.inbox.get.side_effect = [{"id": 4, "workflow_state": "unread"}, {"id": 4, "workflow_state": "archived"}]
     assert store.execute(c, "a", r["action_id"], lambda: None)["state"] == "succeeded"
+
+
+def test_fresh_intent_allows_repeat_but_same_intent_remains_idempotent(tmp_path):
+    c = client()
+    db, store = persistent(tmp_path)
+    first = store.prepare(c, "grant", TEXT)
+    c.submissions.submit_text.side_effect = TimeoutError()
+    assert store.execute(c, "grant", first["action_id"], lambda: None)["state"] == "uncertain"
+    assert store.prepare(c, "grant", TEXT)["action_id"] == first["action_id"]
+    repeated = store.prepare(c, "grant", TEXT, intent_id="after-canvas-inspection-1")
+    assert repeated["action_id"] != first["action_id"]
+    assert repeated["review"]["repeat_intent"]["previous_state"] == "uncertain"
+    assert repeated["review"]["repeat_intent"]["requires_fresh_user_authorization"] is True
+    assert "already have reached Canvas" in repeated["review"]["repeat_intent"]["warning"]
+    restarted = ActionStore(persistence=db, bind_credentials=False)
+    assert restarted.prepare(c, "grant", TEXT, intent_id="after-canvas-inspection-1")["action_id"] == repeated["action_id"]
+    assert restarted.prepare(c, "grant", TEXT)["action_id"] == repeated["action_id"]
+    c.submissions.submit_text.assert_called_once()
+
+
+def test_intent_key_cannot_be_rebound_or_silently_reset(tmp_path):
+    c = client()
+    db, store = persistent(tmp_path)
+    first = store.prepare(c, "grant", TEXT, intent_id="student-intent-1")
+    with pytest.raises(ValueError, match="different content"):
+        store.prepare(c, "grant", {**TEXT, "body": "Another essay"}, intent_id="student-intent-1")
+    with pytest.raises(ValueError, match="still prepared"):
+        store.prepare(c, "grant", TEXT, intent_id="student-intent-2")
+    store.cancel(c, "grant", first["action_id"])
+    assert store.prepare(c, "grant", TEXT, intent_id="student-intent-1")["state"] == "cancelled"
+    assert store.prepare(c, "grant", TEXT, intent_id="student-intent-2")["state"] == "prepared"
+    assert store.prepare(c, "different-grant", TEXT, intent_id="student-intent-1")["state"] == "prepared"
+
+
+@pytest.mark.parametrize("intent", ["", "x" * 129, "new intent", "new\nintent", True])
+def test_intent_id_validation(intent):
+    with pytest.raises(ValueError, match="intent_id"):
+        ActionStore().prepare(client(), "grant", TEXT, intent_id=intent)
+
+
+def test_other_worker_observes_renewed_live_execution_lease(tmp_path):
+    c = client()
+    db, store = persistent(tmp_path, execution_lease=1, heartbeat_interval=0.1, max_execution_seconds=10)
+    other = ActionStore(persistence=db, bind_credentials=False)
+    receipt = store.prepare(c, "grant", TEXT)
+    started, finish = threading.Event(), threading.Event()
+    results = []
+    def perform(*args):
+        started.set()
+        assert finish.wait(5)
+        return {"verified": True}
+    store._perform = perform
+    worker = threading.Thread(target=lambda: results.append(store.execute(c, "grant", receipt["action_id"], lambda: None)))
+    worker.start()
+    assert started.wait(2)
+    try:
+        time.sleep(1.3)
+        assert other.status(c, "grant", receipt["action_id"])["state"] == "executing"
+        with pytest.raises(ValueError, match="already executing"):
+            other.cancel(c, "grant", receipt["action_id"])
+    finally:
+        finish.set()
+        worker.join(5)
+    assert results[0]["state"] == "succeeded"
+
+
+def test_expired_execution_lease_is_never_reclaimed_or_overwritten_by_late_success(tmp_path):
+    c = client()
+    db, store = persistent(tmp_path)
+    other = ActionStore(persistence=db, bind_credentials=False)
+    receipt = store.prepare(c, "grant", TEXT)
+    started, finish = threading.Event(), threading.Event()
+    results = []
+    def perform(*args):
+        started.set()
+        assert finish.wait(5)
+        return {"verified": True}
+    store._perform = perform
+    worker = threading.Thread(target=lambda: results.append(store.execute(c, "grant", receipt["action_id"], lambda: None)))
+    worker.start()
+    assert started.wait(2)
+    db.update("canvas_action", receipt["action_id"], lambda r: {**r, "lease_expires": 0})
+    assert other.status(c, "grant", receipt["action_id"])["state"] == "uncertain"
+    assert other.execute(c, "grant", receipt["action_id"], lambda: None)["state"] == "uncertain"
+    finish.set()
+    worker.join(5)
+    assert results[0]["state"] == "uncertain"
+    assert db.get("canvas_action", receipt["action_id"])["state"] == "uncertain"
+
+
+def test_revocation_during_dispatch_cannot_resurrect_receipt(tmp_path):
+    c = client()
+    db, store = persistent(tmp_path)
+    receipt = store.prepare(c, "grant", TEXT)
+    started, finish = threading.Event(), threading.Event()
+    results = []
+    def perform(*args):
+        started.set()
+        assert finish.wait(5)
+        return {"verified": True}
+    store._perform = perform
+    worker = threading.Thread(target=lambda: results.append(store.execute(c, "grant", receipt["action_id"], lambda: None)))
+    worker.start()
+    assert started.wait(2)
+    db.revoke_owner("grant")
+    finish.set()
+    worker.join(5)
+    assert results[0]["state"] == "revoked"
+    assert db.get("canvas_action", receipt["action_id"]) is None
+    assert not db.scan("canvas_action_payload", owner="grant")
+    assert not db.scan("canvas_action_pending", owner="grant")
+
+
+def test_revocation_during_prepare_prevents_late_insertion(tmp_path):
+    c = client()
+    db, store = persistent(tmp_path)
+    started, finish = threading.Event(), threading.Event()
+    errors = []
+    assignment = copy.deepcopy(c.assignments.get.return_value)
+    def read(*args, **kwargs):
+        started.set()
+        assert finish.wait(5)
+        return assignment
+    c.assignments.get.side_effect = read
+    def prepare():
+        try:
+            store.prepare(c, "grant", TEXT)
+        except Exception as error:
+            errors.append(error)
+    worker = threading.Thread(target=prepare)
+    worker.start()
+    assert started.wait(2)
+    db.revoke_owner("grant")
+    finish.set()
+    worker.join(5)
+    assert len(errors) == 1 and isinstance(errors[0], PermissionError)
+    assert not db.scan("canvas_action", owner="grant")
+
+
+def test_lease_loss_during_preflight_fences_the_actual_write(tmp_path):
+    c = client()
+    db, store = persistent(tmp_path)
+    receipt = store.prepare(c, "grant", TEXT)
+    started, finish = threading.Event(), threading.Event()
+    results = []
+    assignment = copy.deepcopy(c.assignments.get.return_value)
+    def preflight(*args, **kwargs):
+        started.set()
+        assert finish.wait(5)
+        return assignment
+    c.assignments.get.side_effect = preflight
+    worker = threading.Thread(target=lambda: results.append(store.execute(c, "grant", receipt["action_id"], lambda: None)))
+    worker.start()
+    assert started.wait(2)
+    db.update("canvas_action", receipt["action_id"], lambda r: {**r, "lease_expires": 0})
+    finish.set()
+    worker.join(5)
+    assert results[0]["state"] == "uncertain"
+    c.submissions.submit_text.assert_not_called()
+
+
+def _process_action_job(job, db_path, key, barrier, output, action_id=None, counter=None, intent_id=None):
+    """Independent-process contract test: fake dispatch increments a counter only."""
+    from canvas_connector.storage import Store
+    db = Store(db_path, key)
+    store = ActionStore(persistence=db, bind_credentials=False)
+    c = client()
+    def perform(*args):
+        with counter.get_lock():
+            counter.value += 1
+        time.sleep(0.15)
+        return {"verified": True, "id": 9, "submitted": False}
+    store._perform = perform
+    try:
+        barrier.wait(15)
+        if job == "prepare":
+            result = store.prepare(c, "grant", {"kind": "upload", "filename": "paper.txt", "content_base64": "aGk="}, intent_id=intent_id)
+        elif job == "execute":
+            result = store.execute(c, "grant", action_id, lambda: None)
+        else:
+            result = store.cancel(c, "grant", action_id)
+        output.put(("ok", result["state"], result["action_id"]))
+    except Exception as error:
+        output.put(("error", type(error).__name__, str(error)))
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("intent_id", [None, "student-explicit-intent"])
+def test_independent_process_preparations_share_one_id(tmp_path, intent_id):
+    import multiprocessing
+    from cryptography.fernet import Fernet
+    from canvas_connector.storage import Store
+    ctx = multiprocessing.get_context("spawn")
+    path, key = str(tmp_path / "shared.db"), Fernet.generate_key()
+    db = Store(path, key)
+    barrier, output = ctx.Barrier(3), ctx.Queue()
+    workers = [ctx.Process(target=_process_action_job, args=("prepare", path, key, barrier, output), kwargs={"intent_id": intent_id}) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    barrier.wait(15)
+    results = [output.get(timeout=15) for _ in workers]
+    for worker in workers:
+        worker.join(15)
+        assert worker.exitcode == 0
+    assert all(r[0] == "ok" for r in results), results
+    assert results[0][2] == results[1][2]
+    assert len(db.scan("canvas_action", owner="grant")) == 1
+    db.close()
+
+
+@pytest.mark.parametrize("second_job", ["execute", "cancel"])
+def test_independent_process_claim_and_cancel_are_atomic(tmp_path, second_job):
+    import multiprocessing
+    from cryptography.fernet import Fernet
+    from canvas_connector.storage import Store
+    ctx = multiprocessing.get_context("spawn")
+    path, key = str(tmp_path / "shared.db"), Fernet.generate_key()
+    db = Store(path, key)
+    store = ActionStore(persistence=db, bind_credentials=False)
+    receipt = store.prepare(client(), "grant", {"kind": "upload", "filename": "paper.txt", "content_base64": "aGk="})
+    barrier, output, counter = ctx.Barrier(3), ctx.Queue(), ctx.Value("i", 0)
+    workers = [ctx.Process(target=_process_action_job, args=(job, path, key, barrier, output, receipt["action_id"], counter))
+               for job in ("execute", second_job)]
+    for worker in workers:
+        worker.start()
+    barrier.wait(15)
+    results = [output.get(timeout=15) for _ in workers]
+    for worker in workers:
+        worker.join(15)
+        assert worker.exitcode == 0
+    final = store.status(client(), "grant", receipt["action_id"])
+    if final["state"] == "cancelled":
+        assert second_job == "cancel" and counter.value == 0
+    else:
+        assert final["state"] == "succeeded" and counter.value == 1, (results, final)
+    assert all(r[0] == "ok" or "already executing" in r[2] for r in results), results
+    db.close()

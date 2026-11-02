@@ -1,6 +1,6 @@
 # Canvas capabilities and boundaries
 
-The connector gives an assistant a guided view of the Canvas resources the signed-in student can access. Its 38 registered MCP tools and 14 prepared action kinds are the contract for this release. Bundled library endpoints are not automatically public tools, and this release does not claim complete Canvas app parity.
+The connector gives an assistant a guided view of the Canvas resources the signed-in student can access. Its 41 registered MCP tools and 25 prepared action kinds are the contract for this release. Bundled library endpoints are not automatically public tools, and this release does not claim complete Canvas app parity.
 
 For tests actually completed, see [VALIDATION.md](VALIDATION.md). A row below describes supported implementation behavior, not proof that every institution enables it.
 
@@ -35,13 +35,18 @@ Writes require the connector's write permission plus the user's authorization fo
 | `canvas_submit_assignment` | Submit text, a URL, or files from verified upload receipts, when the assignment accepts that type. Group submissions require review in Canvas. |
 | `canvas_add_submission_comment` | Add a submission comment. |
 | `canvas_post_discussion` | Post an entry or reply to an existing entry. |
+| `canvas_manage_discussion` | Edit/delete your own text entry, change subscription or read state, or rate an entry. Editing an attached entry requires Canvas to preserve its file. |
+| `canvas_manage_submission_comments` | Edit/delete your own submission comment. |
+| `canvas_manage_calendar` | Create/edit/delete your personal calendar event. Course/group, appointment, and recurring events require Canvas; create/update supports timed events. |
 | `canvas_send_message` | Send or reply to a conversation. |
 | `canvas_update_inbox` | Apply supported conversation state changes. |
 | `canvas_update_planner` | Create, update, or delete a personal note; apply a planner override. |
 
-Execution verifies the relevant account and target. Treat an uncertain receipt as a reason to inspect Canvas, not as permission to retry a write. Hosted preparations and receipts are encrypted in SQLite; atomic execution claims prevent replay after restart. Prepared payloads expire after 10 minutes, and receipts are retained for up to seven days. Interrupted execution becomes uncertain. Local stdio actions remain process-local. Use one server worker; distributed operation is not validated.
+Execution verifies the relevant account and target. Treat an uncertain receipt as a reason to inspect Canvas, not as permission to retry a write. Hosted preparations and receipts are encrypted in the shared SQLite or PostgreSQL store; atomic claims and renewable execution leases fence competing workers. Prepared payloads expire after 10 minutes, and receipts are retained for up to seven days. Interrupted execution becomes uncertain once its lease expires. Local stdio actions remain process-local. Use SQLite only on one host with local disk, or PostgreSQL for separate hosts. See deployment guidance for measured boundaries.
 
-The action kinds are `upload`, `submit_files`, `submit_text`, `submit_url`, `submission_comment`, `discussion_post`, `discussion_reply`, `inbox_send`, `inbox_reply`, `inbox_update`, `planner_create`, `planner_update`, `planner_delete`, and `planner_override`. Call `canvas_prepare_action`, inspect the review, then follow its `execute.tool` and `action_id`. Each execution tool accepts a prepared action ID and checks its action kind; there is no generic execution bypass. Use `canvas_action_status` to inspect a receipt and `canvas_cancel_action` to discard a preparation.
+The action kinds are `upload`, `submit_files`, `submit_text`, `submit_url`, `submission_comment`, `discussion_post`, `discussion_reply`, `inbox_send`, `inbox_reply`, `inbox_update`, `planner_create`, `planner_update`, `planner_delete`, `planner_override`, `discussion_edit`, `discussion_delete`, `discussion_subscribe`, `discussion_unsubscribe`, `discussion_read`, `discussion_rate`, `submission_comment_edit`, `submission_comment_delete`, `calendar_create`, `calendar_update`, and `calendar_delete`. Call `canvas_prepare_action`, inspect the review, then follow its `execute.tool` and `action_id`. Each execution tool accepts a prepared action ID and checks its action kind; there is no generic execution bypass. Use `canvas_action_status` to inspect a receipt and `canvas_cancel_action` to discard a preparation.
+
+A repeated identical payload normally returns its existing receipt. When the user intentionally wants the same action again, supply a fresh `intent_id` to preparation and review the repeat warning. Reuse that ID when retrying the same preparation. It is bound to the payload; an action still being prepared or executed cannot be bypassed with a new ID. Verify uncertain outcomes in Canvas before any repeat.
 
 The hosted service does not expose arbitrary HTTP requests, local filesystem paths, or course-folder writes. It does not grade other students, impersonate another user, or turn a personal planner override into forced module completion.
 
@@ -51,7 +56,7 @@ The adapter returns a consistent envelope with `schema_version`, `status`, `data
 
 Use source URLs for citations and follow the returned routes. Respect the tool's page limits; where results are bounded or paginated, do not describe them as an exhaustive account audit. Refresh time-sensitive facts before acting on them.
 
-Results exceeding 60,000 characters use a continuation reference instead of a silently truncated object. Use `canvas_read_result` to retrieve JSON-text windows of up to 40,000 characters and join all windows before parsing the complete result. Continuations belong to the authenticated account, expire after 10 minutes, and use a bounded process-local cache; reread the source if a continuation expires or the server restarts. A result too large for that cache returns an explicit `result_too_large` response and requires a narrower request.
+Results exceeding 60,000 characters use a continuation reference instead of a silently truncated object. Use `canvas_read_result` to retrieve JSON-text windows of up to 40,000 characters and join all windows before parsing the complete result. Continuations belong to the authenticated account, expire after 10 minutes, and use a bounded encrypted shared store in hosted mode, or an in-memory cache for local stdio. A hosted continuation can be read by another worker. Reread the source if it expires, or after restarting a local stdio server. A result too large for that cache returns an explicit `result_too_large` response and requires a narrower request.
 
 ## Why full app parity is not promised
 

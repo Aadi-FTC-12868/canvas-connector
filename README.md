@@ -15,7 +15,7 @@ Requires Python 3.12 or later. From this repository:
 
 ```sh
 python3.12 -m venv .venv
-.venv/bin/python -m pip install -r requirements.lock -e ./packages/canvas-py -e ./packages/canvas-mcp-v2 -e '.[dev]'
+.venv/bin/python -m pip install -r requirements.lock -e ./packages/canvas-py -e ./packages/canvas-mcp-v2 -e '.[dev,postgres]'
 ```
 
 Put `CANVAS_BASE_URL` and `CANVAS_API_TOKEN` in a private environment file **outside
@@ -39,6 +39,18 @@ Never place a token in a chat or public configuration.
 This JSON format applies to clients accepting `mcpServers`; Codex uses its own
 MCP configuration or `codex mcp add`. See the [client guide](docs/COMPATIBILITY.md).
 
+## Install packages
+
+The release includes a personal Claude Desktop `.mcpb` extension and a local
+plugin marketplace for Codex and Claude Code. These bundle the connector and
+companion skill; their README and the [client guide](docs/COMPATIBILITY.md) explain
+setup. Downloads do not install a hosted connection or enable writes automatically.
+
+```sh
+python scripts/build_mcpb.py
+python scripts/build_plugins.py
+```
+
 ## Host for multiple users
 
 The server uses two separate OAuth flows: the assistant authenticates to this
@@ -59,10 +71,11 @@ canvas-connector keygen
 canvas-connector serve --host 127.0.0.1 --port 8000
 ```
 
-The bundled Docker Compose configuration binds to loopback for a TLS reverse
-proxy. This reference deployment uses one application worker and SQLite, with
-encrypted durable action receipts and atomic execution claims. Multiple replicas
-still require shared refresh coordination, limits, and continuation storage.
+The bundled Docker configurations bind to loopback for a TLS reverse proxy. Use
+SQLite for workers on one host, or PostgreSQL for separate replicas. Refresh
+coordination, request limits, continuations, action claims, and receipts share
+the database. The CLI supports up to eight workers; production capacity has not
+been benchmarked.
 
 ## Design
 

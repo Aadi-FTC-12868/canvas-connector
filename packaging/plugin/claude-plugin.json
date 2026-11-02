@@ -1,0 +1,12 @@
+{
+  "name": "canvas-connector-personal",
+  "version": "0.4.0",
+  "description": "Personal local Canvas navigation and specifically authorized student actions.",
+  "author": {"name": "Aadi Chandraya"},
+  "license": "MIT",
+  "userConfig": {
+    "canvas_url": {"type": "string", "title": "Your Canvas website", "description": "Your school's HTTPS Canvas origin, without a course path.", "required": true},
+    "canvas_token": {"type": "string", "title": "Your personal Canvas token", "description": "Your own single-user local account only; stored through the host's secure credential storage.", "required": true, "sensitive": true},
+    "allow_writes": {"type": "boolean", "title": "Enable prepared actions", "description": "Actions still need your exact authorization and host approvals.", "default": false}
+  }
+}

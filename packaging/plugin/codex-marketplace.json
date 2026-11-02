@@ -1,0 +1,10 @@
+{
+  "name": "built-by-aadi-local",
+  "interface": {"displayName": "Built by Aadi — Personal Local"},
+  "plugins": [{
+    "name": "canvas-connector-personal",
+    "source": {"source": "local", "path": "./plugins/canvas-connector-personal"},
+    "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+    "category": "Productivity"
+  }]
+}

@@ -1,0 +1,19 @@
+# Standalone alternative to compose.yaml using an operator-managed PostgreSQL database.
+services:
+  connector:
+    build: .
+    restart: unless-stopped
+    command: [canvas-connector, serve, --host, 0.0.0.0, --port, '8000', --workers, '2']
+    ports: ['127.0.0.1:8000:8000']
+    environment:
+      CONNECTOR_PUBLIC_URL: ${CONNECTOR_PUBLIC_URL:?Set the public HTTPS origin}
+      CONNECTOR_ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY:?Set a persistent encryption key}
+      CONNECTOR_DATABASE: ${CONNECTOR_DATABASE:?Set a private PostgreSQL connection URL}
+      CONNECTOR_INSTITUTIONS_FILE: /run/secrets/institutions.json
+      CONNECTOR_TRUSTED_PROXIES:
+    volumes:
+      - ${CONNECTOR_INSTITUTIONS_FILE:?Set the institution credentials file}:/run/secrets/institutions.json:ro
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ['no-new-privileges:true']
+    cap_drop: [ALL]

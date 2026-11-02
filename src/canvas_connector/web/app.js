@@ -6,6 +6,21 @@ const clients = {
   code: {name:'Claude Code', description:'Add the remote connector over HTTP, or use a personal local stdio server.', url:'https://code.claude.com/docs/en/mcp', steps:['Add your hosted endpoint: claude mcp add --transport http canvas <connector-address>','Run /mcp in Claude Code and authenticate Canvas.','Ask for your Canvas dashboard to check the connection.'], local:'Local alternative: claude mcp add --transport stdio canvas -- /absolute/path/canvas-connector stdio. Configure CANVAS_ENV_PATH privately before launch.'}
 };
 const tabs = [...document.querySelectorAll('[role=tab]')];
+let downloads = {desktop:null, plugin:null};
+function showDownloads(client) {
+  document.querySelector('#desktop-install').hidden = !(downloads.desktop && client === 'claude');
+  document.querySelector('#plugin-install').hidden = !(downloads.plugin && ['codex','code'].includes(client));
+  document.querySelector('#plugin-title').textContent = `Personal local plugin for ${clients[client].name}`;
+}
+function downloadTarget(value, extension) {
+  if(typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const url = new URL(value, document.baseURI);
+    if(url.username || url.password || url.hash || !url.pathname.endsWith(extension)) return null;
+    if(url.protocol !== 'https:' && !(url.protocol === 'http:' && url.origin === location.origin)) return null;
+    return url.href;
+  } catch {return null;}
+}
 function choose(button) {
   const entry = clients[button.dataset.client];
   tabs.forEach(tab => { const selected = tab === button; tab.setAttribute('aria-selected', String(selected)); tab.tabIndex = selected ? 0 : -1; });
@@ -16,6 +31,7 @@ function choose(button) {
   entry.steps.forEach(text => { const li = document.createElement('li'); li.textContent = text; list.append(li); });
   const link = document.querySelector('#client-link'); link.href = entry.url; link.textContent = `Open ${entry.name} setup guide`;
   document.querySelector('#local-note').textContent = entry.local;
+  showDownloads(button.dataset.client);
 }
 tabs.forEach((tab, index) => {
   tab.addEventListener('click', () => choose(tab));
@@ -36,6 +52,12 @@ document.querySelector('#copy').addEventListener('click', async () => {
   catch {document.querySelector('#endpoint').select();status.textContent='Select the address and copy it with your keyboard.';}
 });
 fetch('./connection.json', {credentials:'same-origin'}).then(r=>r.ok?r.json():null).then(config=>{
-  if(config?.source_url){const link=document.querySelector('#download-source');link.href=config.source_url;link.hidden=false;}
+  const source = downloadTarget(config?.source_url, '.zip');
+  if(source){const link=document.querySelector('#download-source');link.href=source;link.hidden=false;}
+  downloads.desktop = downloadTarget(config?.desktop_bundle_url, '.mcpb');
+  downloads.plugin = downloadTarget(config?.plugin_bundle_url, '.zip');
+  if(downloads.desktop) document.querySelector('#download-desktop').href = downloads.desktop;
+  if(downloads.plugin) document.querySelector('#download-plugin').href = downloads.plugin;
+  showDownloads(tabs.find(tab=>tab.getAttribute('aria-selected')==='true').dataset.client);
   if(config?.hosted && config.endpoint){document.querySelector('#endpoint').value=config.endpoint;document.querySelector('#endpoint-note').textContent='This server’s connector address. Continue in your assistant to choose a school and sign in.';}
 }).catch(()=>{});

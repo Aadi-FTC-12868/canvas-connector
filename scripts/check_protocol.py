@@ -35,7 +35,12 @@ async def check(live: bool) -> None:
             assert execute.annotations.readOnlyHint is False
             result = await session.call_tool("canvas_capabilities", {})
             assert not result.isError and result.structuredContent
+            capabilities = result.structuredContent["data"]
+            groups = set(capabilities["permission_groups"])
+            assert groups <= names
+            assert all(not tool.annotations.readOnlyHint for tool in listed.tools if tool.name in groups)
             output = {"protocol": initialized.protocolVersion, "tool_count": len(names),
+                      "action_kinds": len(capabilities["actions"]), "execution_groups": len(groups),
                       "structured_results": True, "write_annotations": True, "live": live}
             if live:
                 for name, args in [("canvas_connection_status", {}), ("canvas_dashboard", {"refresh": True})]:

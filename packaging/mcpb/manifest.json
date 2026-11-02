@@ -1,0 +1,51 @@
+{
+  "manifest_version": "0.4",
+  "name": "canvas-connector-personal",
+  "display_name": "Canvas Connector — Personal Local",
+  "version": "0.4.0",
+  "description": "Run the open-source Canvas connector locally for your own account.",
+  "long_description": "Personal, single-user local use with your own Canvas token. This extension is not the hosted multi-user onboarding flow. Schools may restrict API access. Public hosted connections require institution-authorized Canvas OAuth. Writes are disabled by default and still require your exact authorization when enabled. Python and dependencies are managed through the host's UV runtime; first use requires internet access.",
+  "author": {"name": "Aadi Chandraya", "url": "https://builtbyaadi.com"},
+  "homepage": "https://builtbyaadi.com/canvas-connector/",
+  "license": "MIT",
+  "server": {
+    "type": "uv",
+    "entry_point": "entrypoint.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": ["run", "--python", "3.12", "--directory", "${__dirname}", "--no-dev", "entrypoint.py"],
+      "env": {
+        "CANVAS_BASE_URL": "${user_config.canvas_url}",
+        "CANVAS_API_TOKEN": "${user_config.canvas_token}",
+        "CANVAS_ALLOW_WRITES": "${user_config.allow_writes}"
+      }
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {"python": ">=3.12"}
+  },
+  "user_config": {
+    "canvas_url": {
+      "type": "string",
+      "title": "Your Canvas website",
+      "description": "Your school's HTTPS Canvas origin, without a course path. Example: https://school.instructure.com",
+      "required": true
+    },
+    "canvas_token": {
+      "type": "string",
+      "title": "Your personal Canvas token",
+      "description": "For your own single-user local connection only. Stored through the host's secure credential storage. Do not share someone else's token or use this for public hosted onboarding.",
+      "sensitive": true,
+      "required": true
+    },
+    "allow_writes": {
+      "type": "boolean",
+      "title": "Enable prepared Canvas actions",
+      "description": "Allow specifically authorized submissions, comments, discussions, messages, uploads, inbox changes, personal calendar changes, and planner changes. Your assistant must still honor host approvals and your exact instructions.",
+      "default": false
+    }
+  },
+  "keywords": ["canvas", "education", "personal", "mcp"],
+  "tools_generated": true
+}

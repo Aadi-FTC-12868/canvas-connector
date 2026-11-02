@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "canvas": {
+      "command": "uv",
+      "args": ["run", "--python", "3.12", "--directory", "${CLAUDE_PLUGIN_ROOT}", "--no-dev", "plugin_entrypoint.py"],
+      "env": {
+        "CANVAS_BASE_URL": "${user_config.canvas_url}",
+        "CANVAS_API_TOKEN": "${user_config.canvas_token}",
+        "CANVAS_ALLOW_WRITES": "${user_config.allow_writes}"
+      }
+    }
+  }
+}

@@ -8,6 +8,7 @@ services:
       CONNECTOR_ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY:?Set a persistent encryption key}
       CONNECTOR_DATABASE: /data/connector.sqlite3
       CONNECTOR_INSTITUTIONS_FILE: /run/secrets/institutions.json
+      CONNECTOR_TRUSTED_PROXIES:
     volumes:
       - connector-data:/data
       - ${CONNECTOR_INSTITUTIONS_FILE:?Set the institution credentials file}:/run/secrets/institutions.json:ro

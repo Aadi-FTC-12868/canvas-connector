@@ -7,16 +7,33 @@ The portable interface is an MCP server at an HTTPS `/mcp` endpoint with OAuth. 
 | Client | Connection path | Installation and limitations |
 | --- | --- | --- |
 | ChatGPT | Remote Streamable HTTP with OAuth | Add a custom MCP server in ChatGPT Plugins, enter its URL, finish authorization, then install the resulting plugin. Workspace controls can limit availability. |
-| Codex | Remote Streamable HTTP with OAuth, or local stdio | Configure the server, then run `codex mcp login canvas` for remote OAuth. Local stdio uses the local configuration instead. |
+| Codex | Remote Streamable HTTP with OAuth, or local stdio/plugin | Configure the server, then run `codex mcp login canvas` for remote OAuth. The downloadable local marketplace bundles the connector and skill for personal use. |
 | Claude web, Desktop, mobile, Cowork | Remote Streamable HTTP with OAuth | Add the endpoint through Customize → Connectors. Remote requests originate from Anthropic's infrastructure, including when using Desktop or Cowork. |
-| Claude Desktop local server | Local stdio | Configure a local MCP server or package a desktop extension. This is a separate installation from an account's remote connector. |
+| Claude Desktop local server | Local stdio through the `.mcpb` extension | Download the personal extension and install it in Desktop's extension settings. This is a separate installation from an account's remote connector. |
 | Claude Code | Remote HTTP with OAuth, or local stdio | Use `claude mcp add --transport http canvas https://YOUR-HOST/mcp`, then authenticate through `/mcp`. Connectors from a signed-in claude.ai subscription can also be available automatically; API-key and third-party-provider sessions differ. |
 
 Sources: [ChatGPT custom servers](https://developers.openai.com/api/docs/guides/custom-mcp-server), [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [Claude custom connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp), [Claude Code MCP](https://code.claude.com/docs/en/mcp).
 
+## Packaged personal downloads
+
+The source release can build two local artifacts. Both are for the user's own account. They do not provide a public hosted Canvas sign-in or connect cloud/mobile sessions. Institutions can restrict API access; hosted multi-user onboarding still needs institution-authorized OAuth.
+
+| Artifact | Install path | Runtime and account setup |
+| --- | --- | --- |
+| `canvas-connector-<version>-personal.mcpb` | Claude Desktop → Settings → Desktop app → Extensions → Advanced settings → Install Extension | A host supporting UV bundles manages Python and dependencies. Enter the Canvas origin and personal token in the extension's configuration fields; the token is marked sensitive for host secure storage. Writes default off. |
+| `canvas-connector-<version>-plugins.zip` | Extract, add its local marketplace in Codex or Claude Code, then install `canvas-connector-personal@built-by-aadi-local` | Requires UV on PATH. Includes the local source, assistant skill, and setup skill. Claude Code uses plugin configuration fields. Codex uses a private configuration file as explained in the included README. Writes default off. |
+
+The Desktop extension uses manifest version `0.4` and the `uv` server type. Initial dependency installation needs internet access. Platform declarations do not establish successful installation on every operating system. Manual `.mcpb` installs receive updates by installing a newer file; directory publication is separate. [MCPB manifest](https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md), [Claude Desktop extension installation and secure fields](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop)
+
+Build with `python scripts/build_mcpb.py` and `python scripts/build_plugins.py`. The plugin ZIP contains `.agents/plugins/marketplace.json` and `.claude-plugin/marketplace.json`; its plugin includes portable `plugin.json`/`mcp.json` plus compatibility manifests. Its README provides exact local registration commands. Plugin registration and schema validation do not prove account access or successful host execution. [Codex package format](https://developers.openai.com/plugins/build/plugins), [Claude Code plugin format and configuration](https://code.claude.com/docs/en/plugins-reference)
+
+Public directory submission of an OpenAI local-MCP plugin requires approved-partner access. Custom local marketplaces remain a separate path; this release has no public directory listing. [Desktop-only submission requirements](https://developers.openai.com/plugins/deploy/desktop-only)
+
 ## Website installation buttons
 
-Until a directory listing exists, “Connect to ChatGPT” and “Connect to Claude” should open setup instructions with a copyable server URL. They must not report that the connector was installed. Use the actual listing URL after publication and review. A button cannot approve permissions or sign in for the user.
+The website exposes “Download for Claude Desktop” only when `desktop_bundle_url` identifies an actual exported `.mcpb`; optional `plugin_bundle_url` exposes the local plugin ZIP. Users still open the downloaded artifact and complete the host's installation steps. The source download is separately configured by `source_url`.
+
+Until a directory listing exists, hosted ChatGPT and Claude buttons open setup instructions with a copyable server URL. They must not report that the connector was installed. Use the actual listing URL after publication and review. A button cannot approve permissions or sign in for the user.
 
 The documented desktop link `codex://plugins/install/<plugin-name>?marketplace=<marketplace-name>` requires a plugin in a marketplace that the app already knows. It is not an arbitrary MCP-server installation link. See [desktop deep links](https://learn.chatgpt.com/docs/app/commands). We have not verified a universal URL that installs an arbitrary custom server in ChatGPT or Claude with prefilled connection details.
 

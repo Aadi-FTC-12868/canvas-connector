@@ -1,6 +1,6 @@
 # Run the connector
 
-This release supports personal local stdio and an OAuth-protected hosted service. The hosted implementation uses one process and a persistent SQLite database. Container files prepare it for deployment; they do not mean a public service has been deployed. See [VALIDATION.md](VALIDATION.md) for verified checks.
+This release supports personal local stdio and an OAuth-protected hosted service. Hosted workers share encrypted records through SQLite on one host or PostgreSQL across hosts. Container files prepare it for deployment; they do not mean a public service has been deployed. See [VALIDATION.md](VALIDATION.md) for verified checks.
 
 ## Install from source
 
@@ -9,7 +9,7 @@ Use Python 3.12 in a virtual environment. From the repository root:
 ```sh
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.lock -e ./packages/canvas-py -e ./packages/canvas-mcp-v2 -e '.[dev]'
+python -m pip install -r requirements.lock -e ./packages/canvas-py -e ./packages/canvas-mcp-v2 -e '.[dev,postgres]'
 ```
 
 ## Personal local use
@@ -56,19 +56,20 @@ Only configured institutions are accepted. Hosted users select an institution an
 | Variable | Meaning |
 | --- | --- |
 | `CONNECTOR_PUBLIC_URL` | Public HTTPS origin, such as `https://canvas.example.org`. Keep it stable because OAuth metadata and callback URLs depend on it. |
-| `CONNECTOR_DATABASE` | Writable path for the persistent SQLite database. The container uses `/data/connector.sqlite3`. |
+| `CONNECTOR_DATABASE` | A writable local SQLite path, or a PostgreSQL URL (`postgresql://...`) with the `postgres` extra installed. Keep the PostgreSQL URL private; use TLS when the database is remote. |
 | `CONNECTOR_ENCRYPTION_KEY` | Persistent Fernet key for stored credentials and OAuth records. Generate with `canvas-connector keygen`; keep it secret and back it up separately from the database. |
 | `CONNECTOR_INSTITUTIONS_FILE` | Absolute path to the private JSON file above. |
+| `CONNECTOR_TRUSTED_PROXIES` | Optional comma-separated proxy IP addresses or CIDR networks allowed to supply forwarded client information. Omit when connecting directly. Never trust the entire internet. |
 
 Use a secret manager or a private environment file; do not commit keys, institution secrets, account data, or the database. Replacing the encryption key does not migrate existing records. Losing it prevents decryption of those records; planned key rotation needs an explicit migration.
 
 With those variables set, run behind a TLS reverse proxy:
 
 ```sh
-canvas-connector serve --host 127.0.0.1 --port 8000
+canvas-connector serve --host 127.0.0.1 --port 8000 --workers 2
 ```
 
-The MCP URL is `https://YOUR-CONNECTOR-HOST/mcp`. Forward `/mcp`, the OAuth routes, and `/.well-known/*` to the same application. Preserve the exact public `Host` header: the MCP transport checks it against `CONNECTOR_PUBLIC_URL`. The shipped CLI disables proxy-header interpretation and request access logs. Configure the public origin explicitly rather than deriving it from arbitrary forwarded request headers. Restrict the backend port to the proxy.
+The MCP URL is `https://YOUR-CONNECTOR-HOST/mcp`. Forward `/mcp`, the OAuth routes, and `/.well-known/*` to the same application. Preserve the exact public `Host` header: the MCP transport checks it against `CONNECTOR_PUBLIC_URL`. The shipped CLI disables proxy-header interpretation by default and disables request access logs. When a known reverse proxy is in front, set `CONNECTOR_TRUSTED_PROXIES` to its exact connecting addresses or private network. Only those peers can supply forwarded client information for per-client rate limits; restrict direct access to the backend and require the proxy to replace or correctly append forwarded headers. Configure the public origin explicitly rather than deriving it from arbitrary forwarded request headers. Restrict the backend port to the proxy.
 
 For the bundled Docker Compose configuration, place the three operator values `CONNECTOR_PUBLIC_URL`, `CONNECTOR_ENCRYPTION_KEY`, and `CONNECTOR_INSTITUTIONS_FILE` in a private environment file outside this checkout, then run:
 
@@ -76,7 +77,15 @@ For the bundled Docker Compose configuration, place the three operator values `C
 docker compose --env-file /ABSOLUTE/PRIVATE/PATH/connector.env up --build -d
 ```
 
-The compose file binds port 8000 on loopback, mounts the institution file read-only, and persists the database in a named volume. You must supply the HTTPS reverse proxy separately. The container has not been built or run in the development environment because a Docker daemon was unavailable. Container startup and health responses alone do not establish successful Canvas authorization.
+The compose file binds port 8000 on loopback, mounts the institution file read-only, and persists the database in a named volume. You must supply the HTTPS reverse proxy separately. Container startup and health responses alone do not establish successful Canvas authorization.
+
+For an operator-managed PostgreSQL database, also set `CONNECTOR_DATABASE` to its private connection URL and use the standalone alternative:
+
+```sh
+docker compose -f compose.postgres.yaml --env-file /ABSOLUTE/PRIVATE/PATH/connector.env up --build -d
+```
+
+The container includes PostgreSQL support. Its database user needs permission to create the `canvas_connector` schema and its tables during initialization. Use a database dedicated to this service; restrict network access and enable database TLS. All replicas must use the same database, encryption key, institution configuration, and public origin. PostgreSQL connections are opened per worker. Keep replica clocks synchronized: action and result expiry also depend on worker clocks. A lost database connection can be reopened for later operations, but an interrupted transaction is never automatically replayed. A crash just after an upstream Canvas token refresh may require the user to reconnect. Configure your load balancer for the stateless HTTP MCP endpoint; no sticky sessions are required by this implementation.
 
 ## OAuth and permissions
 
@@ -92,13 +101,17 @@ The hosted implementation encrypts stored record payloads and hashes bearer/code
 
 ## Capacity and operational boundaries
 
-Run one application worker. Hosted preparations and receipts use the encrypted SQLite store, including atomic execution claims that survive restart. Prepared payloads expire after 10 minutes, and receipts remain for up to seven days. Receipts can contain the reviewed text and target information. A restart during execution makes the outcome uncertain; inspect Canvas before retrying. Personal stdio actions remain process-local and are lost on exit.
+The CLI supports one to eight workers per server process group. With SQLite, workers must share the same database on a single host's local disk; do not put it on a network filesystem or use separate SQLite copies behind a load balancer. Use PostgreSQL for separate hosts or replicas. Both stores coordinate token refresh, rotating grants, revocation, rate counters, result continuations, preparation, and execution leases. Short transactions serialize store transitions; network calls run outside them. PostgreSQL uses an advisory lock for these transitions, which may become a throughput bottleneck and needs measurement for the intended load.
 
-The application caps concurrent requests at 16, authorization request bodies at 64 KiB, and MCP bodies at 12 MiB. Authenticated MCP traffic is limited to 600 requests per minute per verified grant. Authorization requests use a 120-per-minute limit by direct client IP; unauthenticated MCP requests also use a direct-IP limit. Behind a reverse proxy, these IP limits are shared by clients arriving from that proxy. Add appropriate public-edge limits and measure behavior for the intended deployment.
+Hosted preparations and receipts survive restart. Prepared payloads expire after 10 minutes, and receipts remain for up to seven days. Receipts can contain reviewed text and target information. Execution uses a renewable lease; a dead worker leaves an uncertain outcome after its lease expires rather than allowing automatic replay. Check Canvas before intentionally repeating an uncertain write. Local stdio actions remain process-local and are lost on exit.
 
-Pending actions are limited to 32 per grant, 256 overall, and 64 MiB of staged JSON. The encrypted store has a shared 20,000-record cap for authorization and action records; capacity errors require operational attention. Continuation results use a 16 MiB, process-local cache and expire after 10 minutes. A restart can require re-reading a source even when its action receipt remains available.
+Identical payloads normally resolve to an existing receipt. To intentionally repeat a finished action, pass a fresh `intent_id` to preparation and review its warning. Keep that ID for retries of the same intent. It is bound to the exact payload and cannot bypass an action still being prepared or executed.
 
-Horizontal scaling still requires coordinated token refresh, shared limits and result storage, and testing of concurrent execution across instances. Those are separate implementation tasks, not solved by increasing the worker count. SQLite and encrypted storage are useful for a small single-instance deployment; they are not a claim of public-service scale testing.
+Each worker caps concurrent requests at 16, authorization request bodies at 64 KiB, and MCP bodies at 12 MiB. Shared limits allow 600 authenticated MCP requests per minute per verified grant and 120 non-MCP requests per minute per client IP, including OAuth, setup, static assets, and health checks. Unauthenticated MCP requests also use a client-IP limit. Without a configured trusted proxy, clients arriving through that proxy share its IP limit. Add appropriate public-edge limits and measure behavior for the intended deployment.
+
+Pending actions are limited to 32 per grant, 256 overall, and 64 MiB of staged JSON. The encrypted store has a shared 20,000-record cap, including authorization, action, continuation, and bookkeeping records; capacity errors require operational attention. Continuation results share a 16 MiB budget and expire after 10 minutes. Hosted continuations can be read by another worker; local stdio continuations remain in memory.
+
+Tests cover separate processes with SQLite and PostgreSQL, shared counters, refresh races, revoked grants, execution fencing, and continuation ownership. This is correctness evidence, not a production capacity benchmark or a completed multi-host deployment. Start with a limited pilot and measure latency, database contention, storage growth, Canvas throttling, and recovery before widening access.
 
 Before opening a hosted instance to the public, exercise the complete OAuth and MCP path with at least two distinct test users. Verify isolation, revoked tokens, denied write scopes, rejected redirects, expired preparations, read-after-write verification, and recovery after a server restart. Use a test course for write checks. Also verify the proxy's actual public HTTPS routing and the chosen clients' sign-in flows. Record measured results in [VALIDATION.md](VALIDATION.md).
 
