@@ -549,6 +549,11 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
         """Apply a prepared module mark-done/undo or mark-viewed action after authorization. Only the matching student completion requirement is supported; it never submits coursework or changes grades."""
         return execute_as(action_id, "canvas_update_module_progress")
 
+    @tool(write=True)
+    def canvas_view_page(action_id: str) -> dict[str, Any]:
+        """Open the exact prepared course/group page after authorization for Canvas's native view and progress effects. This may record access or mark a module item viewed; it does not prove coursework completion. Inspect returned content and coverage; never retry an uncertain view automatically."""
+        return execute_as(action_id, "canvas_view_page")
+
     @tool(write=True, destructive=True)
     def canvas_manage_personal_files(action_id: str) -> dict[str, Any]:
         """Apply a prepared personal file/folder create, rename, move or delete after authorization. Folder deletion requires an empty folder; protected/submission folders are excluded."""
@@ -581,7 +586,7 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
 
     @tool(write=True, destructive=True)
     def canvas_manage_group_discussion(action_id: str) -> dict[str, Any]:
-        """Apply a prepared own group-entry edit/delete or group subscription, read-state or rating change after authorization. Attached-entry editing remains unsupported."""
+        """Apply a prepared own group-entry edit/delete or group subscription, read-state or rating change after authorization. Existing attached-entry edits use canvas_edit_discussion_attachment."""
         return execute_as(action_id, "canvas_manage_group_discussion")
 
     @tool(write=True, destructive=True)
@@ -608,6 +613,11 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
     def canvas_post_discussion_attachment(action_id: str) -> dict[str, Any]:
         """Post the prepared course/group discussion entry or reply with its exact attached bytes after authorization. Check entry and attachment verification; uncertain writes must never be retried blindly."""
         return execute_as(action_id, "canvas_post_discussion_attachment")
+
+    @tool(write=True, destructive=True)
+    def canvas_edit_discussion_attachment(action_id: str) -> dict[str, Any]:
+        """Replace your own prepared course/group discussion entry text while preserving its exact existing attachment. Review the text, audience and attachment before authorization. Normal edit history, progress and mention effects apply; inspect independent text and attachment verification."""
+        return execute_as(action_id, "canvas_edit_discussion_attachment")
 
     @tool(write=True, destructive=True)
     def canvas_update_feedback_read_state(action_id: str) -> dict[str, Any]:

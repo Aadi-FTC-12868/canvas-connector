@@ -27,7 +27,7 @@ from canvas_py.endpoints.file_uploads import UploadContext
 from canvas_py.endpoints.submissions import SubmitFileUpload
 
 from .responses import dump
-from . import module_progress, student_actions, personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards, inbox_state, inbox_messages, inbox_attachments
+from . import module_progress, student_actions, personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards, inbox_state, inbox_messages, inbox_attachments, page_views, discussion_edits
 
 PositiveId = Annotated[int, Field(gt=0, strict=True)]
 Text = Annotated[str, Field(min_length=1, max_length=100_000)]
@@ -180,7 +180,8 @@ ActionRequest = Annotated[Union[SubmitText, SubmitURL, SubmitFiles, SubmissionCo
     group_memberships.GroupMembershipActionTypes, discussion_attachments.DiscussionAttachmentActionTypes,
     feedback.FeedbackActionTypes, appointments.AppointmentActionTypes, self_profile.SelfProfileActionTypes,
     dashboard_cards.DashboardCardActionTypes, inbox_state.InboxStateActionTypes,
-    inbox_messages.InboxMessageActionTypes, inbox_attachments.InboxAttachmentActionTypes], Field(discriminator="kind")]
+    inbox_messages.InboxMessageActionTypes, inbox_attachments.InboxAttachmentActionTypes,
+    page_views.PageViewActionTypes, discussion_edits.DiscussionEditActionTypes], Field(discriminator="kind")]
 ACTION_ADAPTER = TypeAdapter(ActionRequest)
 ACTION_KINDS = ["upload", "submit_files", "submit_text", "submit_url", "submission_comment",
                 "discussion_post", "discussion_reply", "inbox_send", "inbox_reply", "inbox_update",
@@ -188,7 +189,8 @@ ACTION_KINDS = ["upload", "submit_files", "submit_text", "submit_url", "submissi
                 *personal_files.KINDS, *preferences.KINDS, *group_content.KINDS, *enrollments.KINDS,
                 *bookmarks.KINDS, *what_if_grades.KINDS, *mastery_paths.KINDS, *group_memberships.KINDS,
                 *discussion_attachments.KINDS, *feedback.KINDS, *appointments.KINDS, *self_profile.KINDS, *dashboard_cards.KINDS,
-                *inbox_state.KINDS, *inbox_messages.KINDS, *inbox_attachments.KINDS]
+                *inbox_state.KINDS, *inbox_messages.KINDS, *inbox_attachments.KINDS,
+                *page_views.KINDS, *discussion_edits.KINDS]
 EXECUTE_ROUTES = {"upload": "canvas_upload_file", "submission_comment": "canvas_add_submission_comment",
     **{kind: "canvas_submit_assignment" for kind in ("submit_files", "submit_text", "submit_url")},
     **{kind: "canvas_post_discussion" for kind in ("discussion_post", "discussion_reply")},
@@ -198,7 +200,8 @@ EXECUTE_ROUTES = {"upload": "canvas_upload_file", "submission_comment": "canvas_
     **student_actions.ROUTES, **module_progress.ROUTES, **personal_files.ROUTES,
     **preferences.ROUTES, **group_content.ROUTES, **enrollments.ROUTES, **bookmarks.ROUTES, **what_if_grades.ROUTES, **mastery_paths.ROUTES, **group_memberships.ROUTES,
     **discussion_attachments.ROUTES, **feedback.ROUTES, **appointments.ROUTES, **self_profile.ROUTES, **dashboard_cards.ROUTES,
-    **inbox_state.ROUTES, **inbox_messages.ROUTES, **inbox_attachments.ROUTES}
+    **inbox_state.ROUTES, **inbox_messages.ROUTES, **inbox_attachments.ROUTES,
+    **page_views.ROUTES, **discussion_edits.ROUTES}
 
 
 class Request(CanvasRequest[Any]):
@@ -504,7 +507,7 @@ class ActionStore:
         kind = p["kind"]
         if kind in inbox_messages.KINDS:
             return inbox_messages.snapshot(canvas, p, files=self._conversation_uploaded(canvas, owner, p))
-        for module in (personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards, inbox_state, inbox_attachments):
+        for module in (personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards, inbox_state, inbox_attachments, page_views, discussion_edits):
             if kind in module.KINDS:
                 return module.snapshot(canvas, p)
         if kind == "upload" and p.get("parent_folder_id") is not None:
@@ -826,7 +829,7 @@ class ActionStore:
 
     def _perform(self, canvas: Canvas, p: dict, target: dict) -> dict:
         kind = p["kind"]
-        for module in (personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards, inbox_state, inbox_messages, inbox_attachments):
+        for module in (personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards, inbox_state, inbox_messages, inbox_attachments, page_views, discussion_edits):
             if kind in module.KINDS:
                 return module.perform(canvas, p, target)
         if kind in module_progress.KINDS:

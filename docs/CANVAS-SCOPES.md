@@ -1,6 +1,6 @@
 # Canvas developer-key scope manifest
 
-This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, `module_progress.py`, `personal_files.py`, `preferences.py`, `group_content.py`, `enrollments.py`, `bookmarks.py`, `what_if_grades.py`, `mastery_paths.py`, `group_memberships.py`, `discussion_attachments.py`, `feedback.py`, `appointments.py`, `self_profile.py`, `dashboard_cards.py`, `inbox_state.py`, `inbox_messages.py`, and `inbox_attachments.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
+This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, `module_progress.py`, `personal_files.py`, `preferences.py`, `group_content.py`, `enrollments.py`, `bookmarks.py`, `what_if_grades.py`, `mastery_paths.py`, `group_memberships.py`, `discussion_attachments.py`, `feedback.py`, `appointments.py`, `self_profile.py`, `dashboard_cards.py`, `inbox_state.py`, `inbox_messages.py`, `inbox_attachments.py`, `page_views.py`, and `discussion_edits.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
 
 Canvas developer-key scopes use the exact route-template spelling below. For example, an API call containing `self` can correspond to a scope containing `:user_id`; keep Canvas's documented placeholder names rather than substituting real IDs. These upstream scopes are separate from this connector's `canvas:read` and `canvas:write` grants. An institutional administrator enables the upstream scopes. See [Canvas developer-key configuration](https://developerdocs.instructure.com/services/canvas/oauth2/file.developer_keys).
 
@@ -27,7 +27,26 @@ Sources: [users](https://developerdocs.instructure.com/services/canvas/resources
 
 Exact module-item reads use the collection route with a 1,000-record bound. The adapter avoids single-item SHOW because Canvas Horizon can record progress during that GET. Collection redirects and pagination links to a different path are refused before dispatch. Explicit progress writes retain their separate scopes below.
 
-Page reads use metadata-only collection requests and the literal `revisions/latest` route, with fresh access/lock checks before and after fetching saved HTML. Page SHOW, front-page SHOW, body-including lists and historical revision routes are not used by the adapter. These ordinary SHOW/body-list reads can mark module progress in Canvas; explicit progress marking remains separate. Pages-tab denial or unsupported content returns a handoff rather than an unsafe fallback. Latest saved HTML carries `content_complete=false` because it may not include additional block/external rendering. See the [page serializer](https://github.com/instructure/canvas-lms/blob/master/lib/api/v1/wiki_page.rb) and [controller](https://github.com/instructure/canvas-lms/blob/master/app/controllers/wiki_pages_api_controller.rb).
+Passive page reads use metadata-only collection requests and the literal `revisions/latest` route, with fresh access/lock checks before and after fetching saved HTML. Page SHOW, front-page SHOW, body-including lists and historical revision routes are not used by the passive adapter. These ordinary SHOW/body-list reads can mark module progress in Canvas; explicit progress marking remains separate. Pages-tab denial or unsupported content returns a handoff rather than an unsafe fallback. Latest saved HTML carries `content_complete=false` because it may not include additional block/external rendering. See the [page serializer](https://github.com/instructure/canvas-lms/blob/master/lib/api/v1/wiki_page.rb) and [controller](https://github.com/instructure/canvas-lms/blob/master/app/controllers/wiki_pages_api_controller.rb).
+
+## Explicit native page viewing
+
+`page_view` uses a separate `canvas_view_page` write-permission group even though
+Canvas implements its native view as GET. Preparation uses current-self context
+access, bounded metadata and the exact latest-revision summary. It does not call
+SHOW. Execution sends one exact `page_id:ID` SHOW with retries and redirects
+disabled; subsequent access checks never repeat it. Native access records and
+module-read effects are disclosed separately from returned content coverage.
+
+```text
+url:GET|/api/v1/courses/:course_id/pages/:url_or_id
+url:GET|/api/v1/groups/:group_id/pages/:url_or_id
+```
+
+These scopes authorize a potentially state-changing view and can be omitted from
+an upstream credential intended only for passive page reads. No page body update,
+creation, deletion, publication, historical revision or front-page SHOW is added.
+See the [native page controller](https://github.com/instructure/canvas-lms/blob/1c9f0bb8013ed69c4f2efe11fd483025469b7e6c/app/controllers/wiki_pages_api_controller.rb).
 
 ## Assignments, discussions, communication, and planning reads
 
@@ -225,7 +244,7 @@ url:DELETE|/api/v1/groups/:group_id/discussion_topics/:topic_id/entries/:entry_i
 url:POST|/api/v1/groups/:group_id/discussion_topics/:topic_id/entries/:entry_id/rating
 ```
 
-Topic read-state changes affect the initial topic text; they do not mark every entry. Initial-post restrictions apply to replies and entry reads, and the adapter never posts automatically to unlock them. Entry edits with existing attachments are refused. Ordinary entry objects do not include update/delete permission fields; the adapter verifies ownership, honors any returned denial, and leaves Canvas's permission enforcement intact. [Discussion participation and exact scope templates](https://developerdocs.instructure.com/services/canvas/resources/discussion_topics).
+Topic read-state changes affect the initial topic text; they do not mark every entry. Initial-post restrictions apply to replies and entry reads, and the adapter never posts automatically to unlock them. Legacy text-only edits refuse existing attachments; the separate preservation action below handles its bounded case. Ordinary entry objects do not include update/delete permission fields; the adapter verifies ownership, honors any returned denial, and leaves Canvas's permission enforcement intact. [Discussion participation and exact scope templates](https://developerdocs.instructure.com/services/canvas/resources/discussion_topics).
 
 ## Course invitations
 
@@ -284,6 +303,21 @@ url:GET|/api/v1/group_categories/:group_category_id
 Existing course-group and own-group lists, exact self-membership and group-permission reads establish the target and consequences. The adapter cannot silently remove a membership in another exclusive group or reassign leadership. A pending request is not accepted membership. It does not use management-only membership PUT as a substitute for an ordinary invitation response. [Groups](https://developerdocs.instructure.com/services/canvas/resources/groups), [group categories](https://developerdocs.instructure.com/services/canvas/resources/group_categories)
 
 Discussion attachments reuse the course/group entry and reply POST scopes already listed. They send actual multipart bytes and verify the own file with existing self-file metadata/download reads. No arbitrary multipart path, other-user file or attachment-ID shortcut is exposed.
+
+Existing attached-entry editing uses `discussion_attachment_edit` and the separate
+`canvas_edit_discussion_attachment` group. It reuses exact course/group entry-list
+GET, entry PUT, profile/context access and generic `files/:id` metadata scopes.
+The fixed top-level JSON payload is `{message: reviewed_text, attachment: {}}`;
+it neither removes nor uploads a file. This preserves the existing association
+in the inspected native controller, whose omitted/null attachment parameter would
+clear it. Preparation and readback bind the exact owned entry, association,
+metadata and bounded bytes; original storage may be user, course or group.
+Course-backed edits also read `url:GET|/api/v1/courses/:course_id/settings`
+to verify `allow_student_discussion_editing`; ordinary entry JSON does not
+provide a positive update-permission field. The mutation still enforces native
+entry permissions and current availability.
+Normal edit history, module participation, mentions and eligible LTI processing
+still apply. [Native controller](https://github.com/instructure/canvas-lms/blob/1c9f0bb8013ed69c4f2efe11fd483025469b7e6c/app/controllers/discussion_entries_controller.rb#L95-L131).
 
 ## Feedback read markers
 
