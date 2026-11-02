@@ -1,6 +1,6 @@
 # Canvas developer-key scope manifest
 
-This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, `module_progress.py`, `personal_files.py`, `preferences.py`, `group_content.py`, `enrollments.py`, `bookmarks.py`, `what_if_grades.py`, `mastery_paths.py`, `group_memberships.py`, `discussion_attachments.py`, `feedback.py`, `appointments.py`, `self_profile.py`, `dashboard_cards.py`, `inbox_state.py`, `inbox_messages.py`, `inbox_attachments.py`, `page_views.py`, and `discussion_edits.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
+This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, `module_progress.py`, `personal_files.py`, `preferences.py`, `group_content.py`, `enrollments.py`, `bookmarks.py`, `what_if_grades.py`, `mastery_paths.py`, `group_memberships.py`, `discussion_attachments.py`, `feedback.py`, `appointments.py`, `self_profile.py`, `dashboard_cards.py`, `inbox_state.py`, `inbox_messages.py`, `inbox_attachments.py`, `page_views.py`, `discussion_edits.py`, `group_files.py`, and `group_file_uploads.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
 
 Canvas developer-key scopes use the exact route-template spelling below. For example, an API call containing `self` can correspond to a scope containing `:user_id`; keep Canvas's documented placeholder names rather than substituting real IDs. These upstream scopes are separate from this connector's `canvas:read` and `canvas:write` grants. An institutional administrator enables the upstream scopes. See [Canvas developer-key configuration](https://developerdocs.instructure.com/services/canvas/oauth2/file.developer_keys).
 
@@ -153,7 +153,7 @@ url:PUT|/api/v1/folders/:id
 url:DELETE|/api/v1/folders/:id
 ```
 
-`canvas_get_folder` uses the general folder GET. Personal actions use the user-scoped reads with literal `self`; `root` is an allowed folder `:id`. Chosen-folder uploads remain in `canvas_upload_file`, using the existing `url:POST|/api/v1/users/:user_id/files` scope with a validated `parent_folder_id`. They do not require a folder-upload scope. There is no forced or recursive deletion, course/group file mutation, or replacement of an existing file. Canvas's ordinary file representation omits edit/delete permissions; the adapter honors any returned permissions and preserves server-side denial for submitted files. [Files and folders API](https://developerdocs.instructure.com/services/canvas/resources/files)
+`canvas_get_folder` uses the general folder GET. Personal actions use the user-scoped reads with literal `self`; `root` is an allowed folder `:id`. Chosen-folder uploads remain in `canvas_upload_file`, using the existing `url:POST|/api/v1/users/:user_id/files` scope with a validated `parent_folder_id`. They do not require a folder-upload scope. This personal-file group has no forced or recursive deletion, course/group target selector, or replacement of an existing file. Separate group-file actions are documented below. Canvas's ordinary file representation omits edit/delete permissions; the adapter honors any returned permissions and preserves server-side denial for submitted files. [Files and folders API](https://developerdocs.instructure.com/services/canvas/resources/files)
 
 ## Notification preferences
 
@@ -245,6 +245,54 @@ url:POST|/api/v1/groups/:group_id/discussion_topics/:topic_id/entries/:entry_id/
 ```
 
 Topic read-state changes affect the initial topic text; they do not mark every entry. Initial-post restrictions apply to replies and entry reads, and the adapter never posts automatically to unlock them. Legacy text-only edits refuse existing attachments; the separate preservation action below handles its bounded case. Ordinary entry objects do not include update/delete permission fields; the adapter verifies ownership, honors any returned denial, and leaves Canvas's permission enforcement intact. [Discussion participation and exact scope templates](https://developerdocs.instructure.com/services/canvas/resources/discussion_topics).
+
+## Shared group files and folders
+
+`canvas_manage_group_files` handles reviewed shared file/folder changes;
+`canvas_upload_group_file` uploads immutable bytes to an exact group destination.
+Preparation requires accepted self-membership and explicit native `participate`,
+`read_files`, and the operation's `manage_files_add`, `manage_files_edit` or
+`manage_files_delete` permission. It does not substitute uploader ownership for
+collaborative group permissions. Additional/reused exact scopes are:
+
+```text
+url:GET|/api/v1/groups/:group_id/permissions
+url:GET|/api/v1/groups/:group_id/folders
+url:GET|/api/v1/groups/:group_id/folders/:id
+url:GET|/api/v1/groups/:group_id/files/:id
+url:GET|/api/v1/folders/:id/folders
+url:GET|/api/v1/folders/:id/files
+url:GET|/api/v1/courses/:course_id/settings
+url:POST|/api/v1/groups/:group_id/folders
+url:POST|/api/v1/groups/:group_id/files
+url:PUT|/api/v1/folders/:id
+url:DELETE|/api/v1/folders/:id
+url:PUT|/api/v1/files/:id
+url:DELETE|/api/v1/files/:id
+```
+
+The existing profile, exact group and self-membership reads are reused. Explicit
+folder ancestry follows group-scoped numeric parent IDs to a root, bounded to
+32 levels. Native-default discovery uses the passive group folder collection,
+bounded to 1,000 folders. The literal root GET is not used: native Canvas can
+create storage during that read. Missing/default parent on creation/upload means native
+unfiled storage, whose root/default initialization occurs only inside execution.
+Multiple ambiguous default candidates require choosing an explicit parent.
+
+Folder rename/move inventories a bounded active subtree; native deleted-history
+path changes are separately disclosed. No forced recursive delete, overwrite,
+URL upload, cross-group move or arbitrary resource URL is exposed. File PUT
+recalculates `locked` from usage-rights policy, and moves can change inherited
+`hidden`; review binds known predictions or explicitly unknown native outcomes.
+Readback verifies the saved target and actual visibility without claiming an
+unknown outcome was pre-predicted. Group uploads use the existing bounded,
+anonymous storage/validated finalization transport and independent group-scoped
+file reads plus downloaded-byte hashes. Existing finalization caveats still apply.
+
+Sources: [native folder controller](https://github.com/instructure/canvas-lms/blob/1c9f0bb8013ed69c4f2efe11fd483025469b7e6c/app/controllers/folders_controller.rb),
+[folder model](https://github.com/instructure/canvas-lms/blob/1c9f0bb8013ed69c4f2efe11fd483025469b7e6c/app/models/folder.rb),
+[group policy](https://github.com/instructure/canvas-lms/blob/1c9f0bb8013ed69c4f2efe11fd483025469b7e6c/app/models/group.rb),
+[Files API](https://developerdocs.instructure.com/services/canvas/resources/files).
 
 ## Course invitations
 

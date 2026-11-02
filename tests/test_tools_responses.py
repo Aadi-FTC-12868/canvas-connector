@@ -63,10 +63,10 @@ def test_large_results_have_bound_owner_checked_complete_continuations():
 def test_tool_annotations_and_typed_action_schema():
     _, mcp, _ = server()
     tools = {t.name: t for t in mcp._tool_manager.list_tools()}
-    assert len(tools) == 85
+    assert len(tools) == 87
     from canvas_connector.actions import ACTION_KINDS, EXECUTE_ROUTES
-    assert len(ACTION_KINDS) == 85
-    assert len(set(EXECUTE_ROUTES.values())) == 32
+    assert len(ACTION_KINDS) == 93
+    assert len(set(EXECUTE_ROUTES.values())) == 34
     for route in set(EXECUTE_ROUTES.values()):
         assert tools[route].annotations.readOnlyHint is False
     assert tools["canvas_submit_assignment"].annotations.readOnlyHint is False

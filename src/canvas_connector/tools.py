@@ -21,7 +21,7 @@ from canvas_py.navigation import CourseSection, ItemType, AssetType
 from mcp.types import ToolAnnotations
 
 from .actions import ActionStore, ActionRequest, ACTION_KINDS, EXECUTE_ROUTES, PositiveId, Request
-from . import group_content, preferences, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, feedback, appointments, self_profile, dashboard_cards, inbox_messages
+from . import group_content, preferences, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, feedback, appointments, self_profile, dashboard_cards, inbox_messages, group_files
 from .responses import ResponseStore, dump, envelope, external_link, failure, window
 
 
@@ -98,7 +98,9 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
             "actions": ACTION_KINDS, "write_workflow": "Prepare exact payload; obtain user authorization; call the returned execute route with action_id.",
             "permission_groups": sorted(set(EXECUTE_ROUTES.values())),
             "client_approvals": "Client controls always allow/ask/deny. Server write scopes and Canvas permissions are also enforced.",
-            "limits": {"inline_upload_bytes": 8 * 1024 * 1024, "action_expiry_seconds": store.ttl, "list_page_size": 100},
+            "limits": {"inline_upload_bytes": 8 * 1024 * 1024, "action_expiry_seconds": store.ttl, "list_page_size": 100,
+                       "group_subtree_items": group_files.MAX_ITEMS, "group_default_folder_discovery": group_files.MAX_ITEMS,
+                       "group_folder_ancestry": group_files.MAX_DEPTH},
             "receipt_storage": "encrypted_persistent" if store.persistence is not None else "process_local; unknown receipts after restart require checking Canvas",
             "external_links": "Use the matching Google Drive/Microsoft connector with the school account, otherwise ask for setup or use the user's browser.",
             "unsupported": ["quiz attempts and proctoring", "LTI/browser-only workflows", "group submissions", "account administration", "arbitrary API proxy"],
@@ -558,6 +560,16 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
     def canvas_manage_personal_files(action_id: str) -> dict[str, Any]:
         """Apply a prepared personal file/folder create, rename, move or delete after authorization. Folder deletion requires an empty folder; protected/submission folders are excluded."""
         return execute_as(action_id, "canvas_manage_personal_files")
+
+    @tool(write=True, destructive=True)
+    def canvas_manage_group_files(action_id: str) -> dict[str, Any]:
+        """Apply the reviewed group file/folder create, rename, move or delete after authorization for the shared group and any native visibility effect. Folder moves/renames include the reviewed bounded subtree; deletion requires an empty folder. Inspect independent readback and never replay an uncertain change automatically."""
+        return execute_as(action_id, "canvas_manage_group_files")
+
+    @tool(write=True)
+    def canvas_upload_group_file(action_id: str) -> dict[str, Any]:
+        """Upload the exact prepared bytes to a reviewed group folder after authorization for its shared audience and native visibility policy. Verify the saved file, names, size/hash and access state. Uploading does not submit coursework; ordinary Canvas notifications may apply."""
+        return execute_as(action_id, "canvas_upload_group_file")
 
     @tool(write=True, destructive=True)
     def canvas_update_notifications(action_id: str) -> dict[str, Any]:

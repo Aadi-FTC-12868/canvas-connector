@@ -1,6 +1,6 @@
 # Validation record
 
-Development release 0.11.0, validated November 2, 2026 UTC.
+Development release 0.12.0, validated November 2, 2026 UTC.
 Historical installation, container and benchmark evidence below is identified by release; those checks are not implied to have been repeated for every new capability.
 These checks do not establish complete Canvas app parity or a production service.
 
@@ -14,10 +14,11 @@ These checks do not establish complete Canvas app parity or a production service
   discovery metadata, with or without a trailing slash in operator configuration.
   Endpoint construction and CSRF origin checks remain separately verified.
 
-- Python 3.12 check for 0.11.0: **3,612 tests passed; 13 PostgreSQL
+- Python 3.12 check for 0.12.0: **3,935 tests passed; 13 PostgreSQL
   tests skipped** without a local PostgreSQL instance. New coverage includes
   appointments, self-profile/settings changes, native dashboard ordering,
-  advanced Inbox authoring/controls/attachments, passive page reads and existing student actions. Version 0.10.1 Linux CI passed 3,403 tests,
+  advanced Inbox authoring/controls/attachments, passive page reads, shared group
+  files and existing student actions. Version 0.11.0 Linux CI passed 3,623 tests,
   including all 13 PostgreSQL cases, with two native OCR cases skipped; both
   OCR tests passed locally. Two upstream warnings remain: Starlette's test-client
   httpx deprecation and MCP/Pydantic's settings forward reference.
@@ -32,7 +33,7 @@ These checks do not establish complete Canvas app parity or a production service
   actual client requests through synthetic HTTP transports; no live writes occur.
 - Real stdio MCP subprocess: initialize, tools/list, schemas, structured results,
   mutation annotations, and capabilities passed on protocol `2025-11-25`.
-  The surface has **85 tools**, **85 prepared action kinds**, and **32 execution
+  The surface has **87 tools**, **93 prepared action kinds**, and **34 execution
   permission groups**. No generic write executor is exposed.
 - The optional personal tunnel facade uses MCP 2.3.0 in an isolated environment;
   the core stays on MCP 1.27.0. A fresh locked install passed 32 dedicated tests,
@@ -125,6 +126,18 @@ These checks do not establish complete Canvas app parity or a production service
   cover reply-disabled own edits, unchanged timestamp precision, zero-PUT no-ops,
   no retry/redirect after uncertain delivery, encrypted receipt restart and
   legacy text-edit payload/fingerprint compatibility. No live edits were made.
+- Shared group-file checks add 323 cases for management, immutable uploads and
+  passive group-read redirects. They cover accepted membership, collaborative
+  native rights, explicit public/shared audiences, known and unknown publication
+  effects, inherited visibility, bounded active subtrees and deleted-history
+  limitations. Passive preparation never initializes root storage. Native first-use
+  default creation, ordinary unfiled-folder changes and exact numeric ancestry
+  have independent readback; unexpected destinations cannot be reported as verified.
+  Actual multipart tests verify anonymous storage authentication isolation and
+  downloaded bytes. Eight independent receipt-path probes check visibility and
+  concurrent-change failures. Lost or inconsistent results become terminal
+  uncertain receipts without replay; existing upload/attachment receipts remain
+  compatible. No real group files, folders or messages were changed.
 - Discussion attachments exercise actual multipart encoding, immutable bytes,
   course/group audience, entry identity/parent, filename normalization, self-file
   metadata, bounded download hashes and a final attachment association read.
@@ -193,6 +206,15 @@ These checks do not establish complete Canvas app parity or a production service
   copies successfully with 42 tools, 27 actions, and 11 permission groups.
   Clean extracted packages also bootstrapped
   their bundled Python packages and ran a real MCP session.
+- A clean extracted 0.12.0 MCPB installed 37 bundled/registry packages through
+  UV under an isolated Python 3.12 environment and exposed all 87 tools, 93
+  actions and 34 execution groups. Cold launch completed in 9.544 seconds;
+  all 34 execution-group boundaries passed with writes disabled and enabled.
+  Runtime network guards recorded zero Canvas requests. Warm launch completed
+  in 0.398 seconds; all 110 original archive entries remained unchanged. Archive
+  manifests, CRCs, path/casefold uniqueness and release timestamps were checked.
+  The installed SDK matched the archive and dispatched a synthetic 429 write once.
+  This is extracted-runtime verification, separate from native host installation.
 - A clean extracted 0.11.0 MCPB installed 37 bundled/registry packages through
   UV under an isolated Python 3.12 environment and exposed all 85 tools, 85
   actions and 32 execution groups. The cold launch completed in 9.837 seconds;
@@ -205,6 +227,13 @@ These checks do not establish complete Canvas app parity or a production service
   launched a real stdio session with all 83 tools, 83 actions and 30 execution
   groups, using synthetic credentials, an isolated Python 3.12 install/cache and temporary storage. The cold launch installed 37 packages and completed protocol validation in 7.744 seconds; a network guard recorded zero Canvas requests. All 30 execution-group boundaries passed with writes disabled and enabled. This
   validates the packaged runtime, separately from native client installation.
+- Native in-place `unzip` upgrades from 0.11.0 to 0.12.0 passed for all three
+  artifacts using the same per-artifact paths, Python environments and UV caches.
+  Upgraded and unchanged-restart runtimes exposed 87 tools, 93 actions and 34
+  groups. Imported group-file management/upload modules matched archive bytes;
+  SDK 0.2.1 still dispatched a synthetic 429 write once. Unchanged restarts retained
+  file identity/timestamps and did not rebuild or reinstall. No normal host
+  settings or live Canvas resources were changed.
 - Native in-place `unzip` upgrades from 0.10.1 to 0.11.0 passed for all three
   artifacts using the same per-artifact paths, Python environments and UV caches.
   Each upgraded runtime exposed 85 tools, 85 actions and 32 groups; imported
@@ -236,7 +265,7 @@ These checks do not establish complete Canvas app parity or a production service
   plugin archives, and Docker image.
 
 - The public [source repository](https://github.com/Aadi-FTC-12868/canvas-connector)
-  has its MIT license, tracked source history, and [passing 0.10.1 Linux CI](https://github.com/Aadi-FTC-12868/canvas-connector/actions/runs/41413995205).
+  has its MIT license, tracked source history, and [passing 0.11.0 Linux CI](https://github.com/Aadi-FTC-12868/canvas-connector/actions/runs/41417649126).
   The website serves the reviewed source and install packages.
 - A reproducible [synthetic workload](BENCHMARKS.md) checked 1,000 authenticated
   profile requests across 64 accounts with one and two SQLite workers. Both runs
@@ -267,7 +296,7 @@ python scripts/check_protocol.py
 uv --no-config sync --python 3.12 --project packages/canvas-tunnel --locked
 CANVAS_CORE_PYTHON="$(python -c 'import sys; print(sys.executable)')" \
   uv --no-config run --project packages/canvas-tunnel --locked --no-sync \
-  pytest -c packages/canvas-tunnel/pyproject.toml packages/canvas-tunnel/tests
+  python -m pytest -c packages/canvas-tunnel/pyproject.toml packages/canvas-tunnel/tests
 python scripts/release_check.py --build
 python scripts/build_mcpb.py
 python scripts/build_plugins.py

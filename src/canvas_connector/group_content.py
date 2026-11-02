@@ -63,6 +63,10 @@ ROUTES = {"topic_create": "canvas_create_discussion"}
 
 
 class _Request(CanvasRequest[Any]):
+    # These fixed API routes must not redirect a passive access check into a
+    # native page/module view, which can record progress despite using GET.
+    allow_redirects = False
+
     def __init__(self, path: str, *, query: list | None = None, body: dict | None = None):
         self._path, self._query, self._body = path, query or [], body
         self.method = "POST" if body is not None else "GET"
