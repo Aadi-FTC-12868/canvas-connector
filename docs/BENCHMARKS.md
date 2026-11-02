@@ -26,6 +26,12 @@ Canvas throttling, school-network latency, dashboards with many upstream calls,
 PDF extraction, uploads, or OAuth onboarding. Those workloads need deployment
 measurements. Normal grant and body limits remain enabled.
 
+A separate GitHub Linux x86_64 / Python 3.12.15 run with PostgreSQL and two
+workers completed the same 1,000 requests: **111.48 requests/second**, p50
+271.42 ms, p95 394.02 ms, p99 430.00 ms, and zero errors. This is a different
+machine and database environment, so it is not an SQLite-versus-PostgreSQL
+comparison. [CI run and downloadable result](https://github.com/Aadi-FTC-12868/canvas-connector/actions/runs/41390727813).
+
 ## Reproduce
 
 ```sh

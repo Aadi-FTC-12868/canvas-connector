@@ -6,15 +6,17 @@ These checks do not establish complete Canvas app parity or a production service
 ## Completed
 
 - Python 3.12 local check: **762 tests passed; 13 PostgreSQL tests skipped**
-  without a local PostgreSQL instance. The prior 0.4.0 release passed all 656
-  tests including PostgreSQL in Linux CI; the expanded suite is also run there.
+  without a local PostgreSQL instance. Linux CI at `29d2df1` passed **773 tests**,
+  including all 13 PostgreSQL tests; its two optional native OCR tests were
+  skipped because those executables were absent. Both OCR tests passed locally.
+  Two subsequent invitation-filter regression cases also passed locally.
   Two upstream warnings remain: Starlette's test-client httpx deprecation and an
   MCP/Pydantic settings forward-reference warning.
 - Real stdio MCP subprocess: initialize, tools/list, schemas, structured results,
   mutation annotations, and capabilities passed on protocol `2025-11-25`.
   The surface has **42 tools**, **27 prepared action kinds**, and **11 execution
   permission groups**. No generic write executor is exposed.
-- The earlier read-only live Canvas subprocess check authenticated the profile
+- The final 0.5.0 read-only live Canvas subprocess check authenticated the profile
   and refreshed dashboard; the dashboard response was 2,729 bytes. No live
   submissions, uploads, messages, comments, or other Canvas writes were performed.
 - Synthetic hosted HTTP OAuth checks cover PKCE S256, resource/client binding,
@@ -52,7 +54,10 @@ These checks do not establish complete Canvas app parity or a production service
   validates the plugin/catalog. Both Codex and Claude Code installed the
   marketplace/plugin into isolated temporary settings without changing normal
   user settings. A fresh UV launch from the installed cache ran a real MCP
-  session with synthetic credentials. Clean extracted packages also bootstrapped
+  session with synthetic credentials. Both CLIs then installed from the public
+  HTTPS GitHub URL without Git credentials and launched their own installed
+  copies successfully with 42 tools, 27 actions, and 11 permission groups.
+  Clean extracted packages also bootstrapped
   their bundled Python packages and ran a real MCP session.
 - Source releases use an allowlist, SHA-256 manifests, safe archive paths, and a
   private-path/school-marker scan. A known private-token scan found zero matches
@@ -67,7 +72,7 @@ These checks do not establish complete Canvas app parity or a production service
   plugin archives, and Docker image.
 
 - The public [source repository](https://github.com/Aadi-FTC-12868/canvas-connector)
-  has its MIT license, tracked source history, and a passing Linux CI baseline.
+  has its MIT license, tracked source history, and [passing Linux CI](https://github.com/Aadi-FTC-12868/canvas-connector/actions/runs/41390727813).
   The website serves the reviewed source and install packages.
 - A reproducible [synthetic workload](BENCHMARKS.md) checked 1,000 authenticated
   profile requests across 64 accounts with one and two SQLite workers. Both runs

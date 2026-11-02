@@ -2,7 +2,7 @@
 
 The connector gives an assistant a guided view of the Canvas resources the signed-in student can access. Its 42 registered MCP tools and 27 prepared action kinds are the contract for this release. Bundled library endpoints are not automatically public tools, and this release does not claim complete Canvas app parity.
 
-For tests actually completed, see [VALIDATION.md](VALIDATION.md). A row below describes supported implementation behavior, not proof that every institution enables it.
+For the full student-workflow acceptance ledger and remaining gaps, see [APP-PARITY.md](APP-PARITY.md). For tests actually completed, see [VALIDATION.md](VALIDATION.md). A row below describes supported implementation behavior, not proof that every institution enables it.
 
 ## Reading and navigation
 

@@ -100,9 +100,10 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
         return envelope(canvas.navigation.dashboard(refresh=refresh), origin=canvas.config.base_url)
 
     @tool()
-    def canvas_list_courses(enrollment_state: Literal["active", "completed", "invited"] = "active", offset: int = 0, limit: int = 30) -> dict[str, Any]:
-        """Browse current or historical enrollments with Canvas-reported scores; follows bounded pagination."""
-        return _page(provider(), ListCourses(enrollment_state=enrollment_state, include=["term", "total_scores"]), offset, limit)
+    def canvas_list_courses(enrollment_state: Literal["active", "completed", "invited_or_pending", "invited"] = "active", offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        """Browse enrollments with Canvas-reported scores. invited_or_pending includes invitations; invited is a compatibility alias. Follows bounded pagination."""
+        state = "invited_or_pending" if enrollment_state == "invited" else enrollment_state
+        return _page(provider(), ListCourses(enrollment_state=state, include=["term", "total_scores"]), offset, limit)
 
     @tool()
     def canvas_course_home(course_id: PositiveId, refresh: bool = False) -> dict[str, Any]:

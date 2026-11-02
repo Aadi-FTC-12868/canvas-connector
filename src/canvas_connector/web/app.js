@@ -72,7 +72,7 @@ document.querySelector('#copy').addEventListener('click', async () => {
   try {await navigator.clipboard.writeText(value);status.textContent='Connector address copied.';}
   catch {document.querySelector('#endpoint').select();status.textContent='Select the address and copy it with your keyboard.';}
 });
-fetch('./connection.json', {credentials:'same-origin'}).then(r=>r.ok?r.json():null).then(config=>{
+fetch('./connection.json', {credentials:'same-origin',cache:'no-store'}).then(r=>r.ok?r.json():null).then(config=>{
   const source = downloadTarget(config?.source_url, '.zip');
   if(source){const link=document.querySelector('#download-source');link.href=source;link.hidden=false;}
   downloads.desktop = downloadTarget(config?.desktop_bundle_url, '.mcpb');

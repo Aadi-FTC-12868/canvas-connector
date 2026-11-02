@@ -79,6 +79,16 @@ def test_external_google_link_returns_handoff_without_fetching():
     c.navigation.open_url.assert_not_called()
 
 
+@pytest.mark.parametrize("state", ["invited", "invited_or_pending"])
+def test_course_invitation_filter_uses_documented_canvas_query(state):
+    c, _, fns = server()
+    c.paginate = Mock(return_value=(item for item in []))
+    result = fns["canvas_list_courses"](enrollment_state=state)
+    assert result["status"] == "ok"
+    request = c.paginate.call_args.args[0]
+    assert ("enrollment_state", "invited_or_pending") in request.query_pairs()
+
+
 def test_forbidden_is_not_empty_success_and_error_does_not_leak_body():
     c, _, fns = server()
     c.navigation.dashboard.side_effect = CanvasError("upstream secret body", status=403, body="private")
