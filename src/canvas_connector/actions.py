@@ -27,7 +27,7 @@ from canvas_py.endpoints.file_uploads import UploadContext
 from canvas_py.endpoints.submissions import SubmitFileUpload
 
 from .responses import dump
-from . import module_progress, student_actions, personal_files, preferences, group_content
+from . import module_progress, student_actions, personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades
 
 PositiveId = Annotated[int, Field(gt=0, strict=True)]
 Text = Annotated[str, Field(min_length=1, max_length=100_000)]
@@ -175,12 +175,14 @@ ActionRequest = Annotated[Union[SubmitText, SubmitURL, SubmitFiles, SubmissionCo
     PlannerCreate, PlannerUpdate, PlannerDelete, PlannerOverride, Upload,
     student_actions.StudentActionTypes, module_progress.ModuleProgressActionTypes,
     personal_files.PersonalFileActionTypes, preferences.PreferenceActionTypes,
-    group_content.GroupContentActionTypes], Field(discriminator="kind")]
+    group_content.GroupContentActionTypes, enrollments.InvitationActionTypes,
+    bookmarks.BookmarkActionTypes, what_if_grades.WhatIfActionTypes], Field(discriminator="kind")]
 ACTION_ADAPTER = TypeAdapter(ActionRequest)
 ACTION_KINDS = ["upload", "submit_files", "submit_text", "submit_url", "submission_comment",
                 "discussion_post", "discussion_reply", "inbox_send", "inbox_reply", "inbox_update",
                 "planner_create", "planner_update", "planner_delete", "planner_override", *student_actions.KINDS, *module_progress.KINDS,
-                *personal_files.KINDS, *preferences.KINDS, *group_content.KINDS]
+                *personal_files.KINDS, *preferences.KINDS, *group_content.KINDS, *enrollments.KINDS,
+                *bookmarks.KINDS, *what_if_grades.KINDS]
 EXECUTE_ROUTES = {"upload": "canvas_upload_file", "submission_comment": "canvas_add_submission_comment",
     **{kind: "canvas_submit_assignment" for kind in ("submit_files", "submit_text", "submit_url")},
     **{kind: "canvas_post_discussion" for kind in ("discussion_post", "discussion_reply")},
@@ -188,7 +190,7 @@ EXECUTE_ROUTES = {"upload": "canvas_upload_file", "submission_comment": "canvas_
     "inbox_update": "canvas_update_inbox",
     **{kind: "canvas_update_planner" for kind in ("planner_create", "planner_update", "planner_delete", "planner_override")},
     **student_actions.ROUTES, **module_progress.ROUTES, **personal_files.ROUTES,
-    **preferences.ROUTES, **group_content.ROUTES}
+    **preferences.ROUTES, **group_content.ROUTES, **enrollments.ROUTES, **bookmarks.ROUTES, **what_if_grades.ROUTES}
 
 
 class Request(CanvasRequest[Any]):
@@ -403,7 +405,7 @@ class ActionStore:
 
     def _snapshot(self, canvas: Canvas, owner: str, p: dict) -> dict:
         kind = p["kind"]
-        for module in (personal_files, preferences, group_content):
+        for module in (personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades):
             if kind in module.KINDS:
                 return module.snapshot(canvas, p)
         if kind == "upload" and p.get("parent_folder_id") is not None:
@@ -697,7 +699,7 @@ class ActionStore:
 
     def _perform(self, canvas: Canvas, p: dict, target: dict) -> dict:
         kind = p["kind"]
-        for module in (personal_files, preferences, group_content):
+        for module in (personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades):
             if kind in module.KINDS:
                 return module.perform(canvas, p, target)
         if kind in module_progress.KINDS:

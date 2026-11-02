@@ -1,6 +1,6 @@
 # Canvas developer-key scope manifest
 
-This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, `module_progress.py`, `personal_files.py`, `preferences.py`, and `group_content.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
+This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, `module_progress.py`, `personal_files.py`, `preferences.py`, `group_content.py`, `enrollments.py`, `bookmarks.py`, and `what_if_grades.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
 
 Canvas developer-key scopes use the exact route-template spelling below. For example, an API call containing `self` can correspond to a scope containing `:user_id`; keep Canvas's documented placeholder names rather than substituting real IDs. These upstream scopes are separate from this connector's `canvas:read` and `canvas:write` grants. An institutional administrator enables the upstream scopes. See [Canvas developer-key configuration](https://developerdocs.instructure.com/services/canvas/oauth2/file.developer_keys).
 
@@ -115,7 +115,7 @@ Sources: [personal file uploads](https://developerdocs.instructure.com/services/
 
 Upload finalization follows Canvas's validated returned confirmation URL. Some installations use an older `create_success` confirmation route. The static list above does not claim to enumerate every installation-specific finalization permission; exercise a small upload in a test course with the exact developer key before enabling uploads publicly. Do not broaden the key to unrelated administration endpoints to hide a denied call.
 
-The submission-update scope also exists for grading, but this connector's action only sends its supported comment payload; Canvas still enforces the student's underlying permissions. No course/assignment creation, grade editing, quiz attempt, user administration, or arbitrary API-call tool is enabled by this manifest.
+The submission-update scope also exists for grading, but this connector's action only sends its supported comment payload; Canvas still enforces the student's underlying permissions. No course/assignment creation, recorded-grade editing, quiz attempt, user administration, or arbitrary API-call tool is enabled by this manifest. Student What-if scores use the separate endpoints below.
 
 ## Personal file and folder management
 
@@ -202,3 +202,63 @@ url:POST|/api/v1/groups/:group_id/discussion_topics
 ```
 
 Course topic readback uses the existing course-discussion GET scope; group readback uses the group-discussion GET above. This adds no group creation/membership management, announcement or graded-topic creation, group-file writes, or quiz-attempt scope. [Groups and memberships](https://developerdocs.instructure.com/services/canvas/resources/groups), [course permissions](https://developerdocs.instructure.com/services/canvas/resources/courses), [discussion topics](https://developerdocs.instructure.com/services/canvas/resources/discussion_topics), [pages](https://developerdocs.instructure.com/services/canvas/resources/pages), [files](https://developerdocs.instructure.com/services/canvas/resources/files).
+
+## Group discussion participation
+
+`canvas_post_group_discussion` posts an entry or reply to one explicitly selected group topic. `canvas_manage_group_discussion` edits/deletes an own entry or changes the current user's subscription, topic/entry read state, or entry rating. Both reuse the profile, group membership, and exact-topic GET scopes above. Additional mutation and readback scopes are:
+
+```text
+url:GET|/api/v1/groups/:group_id/discussion_topics/:topic_id/entry_list
+url:GET|/api/v1/groups/:group_id/discussion_topics/:topic_id/view
+url:POST|/api/v1/groups/:group_id/discussion_topics/:topic_id/entries
+url:POST|/api/v1/groups/:group_id/discussion_topics/:topic_id/entries/:entry_id/replies
+url:PUT|/api/v1/groups/:group_id/discussion_topics/:topic_id/entries/:id
+url:DELETE|/api/v1/groups/:group_id/discussion_topics/:topic_id/entries/:id
+url:PUT|/api/v1/groups/:group_id/discussion_topics/:topic_id/subscribed
+url:DELETE|/api/v1/groups/:group_id/discussion_topics/:topic_id/subscribed
+url:PUT|/api/v1/groups/:group_id/discussion_topics/:topic_id/read
+url:DELETE|/api/v1/groups/:group_id/discussion_topics/:topic_id/read
+url:PUT|/api/v1/groups/:group_id/discussion_topics/:topic_id/entries/:entry_id/read
+url:DELETE|/api/v1/groups/:group_id/discussion_topics/:topic_id/entries/:entry_id/read
+url:POST|/api/v1/groups/:group_id/discussion_topics/:topic_id/entries/:entry_id/rating
+```
+
+Topic read-state changes affect the initial topic text; they do not mark every entry. Initial-post restrictions apply to replies and entry reads, and the adapter never posts automatically to unlock them. Entry edits with existing attachments are refused. Ordinary entry objects do not include update/delete permission fields; the adapter verifies ownership, honors any returned denial, and leaves Canvas's permission enforcement intact. [Discussion participation and exact scope templates](https://developerdocs.instructure.com/services/canvas/resources/discussion_topics).
+
+## Course invitations
+
+`canvas_course_invitations` reads the authenticated student's invitations, including future/restricted course invitations. `canvas_respond_to_invitation` accepts an invited or previously declined enrollment, or declines an invited enrollment. It uses the existing profile scope and these additional scopes:
+
+```text
+url:GET|/api/v1/users/:user_id/enrollments
+url:POST|/api/v1/courses/:course_id/enrollments/:id/accept
+url:POST|/api/v1/courses/:course_id/enrollments/:id/reject
+```
+
+The user-scoped GET is called with `self` and verifies the exact enrollment, course, student role, and resulting state. Course date restrictions still apply after acceptance. These actions do not create enrollments, remove active enrollments, or use enrollment-administration scopes. [Enrollments and invitation responses](https://developerdocs.instructure.com/services/canvas/resources/enrollments).
+
+## Personal bookmarks
+
+`canvas_bookmarks` reads the current user's bookmarks. `canvas_manage_bookmarks` creates, updates, moves, or deletes a reviewed bookmark using the current-user profile scope and these routes:
+
+```text
+url:GET|/api/v1/users/self/bookmarks
+url:GET|/api/v1/users/self/bookmarks/:id
+url:POST|/api/v1/users/self/bookmarks
+url:PUT|/api/v1/users/self/bookmarks/:id
+url:DELETE|/api/v1/users/self/bookmarks/:id
+```
+
+Bookmark destinations are stored links and are not automatically opened or fetched. Position changes can shift neighboring bookmarks, so ordering verification also uses the list GET. The literal `self` in these scope templates is documented by Canvas. [Bookmarks](https://developerdocs.instructure.com/services/canvas/resources/bookmarks).
+
+## Student What-if scores
+
+`canvas_what_if_grades` reads saved hypothetical scores without invoking a mutation or grade calculation. `canvas_update_what_if_grades` sets/resets one own assignment's hypothetical score or resets the current student's course What-if scores. These operations reuse the profile, course, enrollment, course-permission, assignment, and single-submission GET scopes above, plus:
+
+```text
+url:GET|/api/v1/courses/:course_id/students/submissions
+url:PUT|/api/v1/submissions/:id/what_if_grades
+url:PUT|/api/v1/courses/:course_id/what_if_grades/reset
+```
+
+The submission-list GET filters to the current user. Writes send only a hypothetical `student_entered_score` or the dedicated reset request, then independently read saved scores and confirm unchanged recorded grades. Course reset verification covers Canvas-visible submissions; its response identifies that coverage limit. Hypothetical aggregate grades come from the mutation response and are not independently recalculated by a read. These endpoints add no teacher grading scope and do not use the generic submission-update PUT. [What-if grades](https://developerdocs.instructure.com/services/canvas/resources/what_if_grades), [submission reads](https://developerdocs.instructure.com/services/canvas/resources/submissions), [course permissions](https://developerdocs.instructure.com/services/canvas/resources/courses).

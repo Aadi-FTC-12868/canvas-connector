@@ -21,7 +21,7 @@ from canvas_py.navigation import CourseSection, ItemType, AssetType
 from mcp.types import ToolAnnotations
 
 from .actions import ActionStore, ActionRequest, ACTION_KINDS, EXECUTE_ROUTES, PositiveId, Request
-from . import group_content, preferences
+from . import group_content, preferences, enrollments, bookmarks, what_if_grades
 from .responses import ResponseStore, dump, envelope, external_link, failure, window
 
 
@@ -92,7 +92,8 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
         """Describe supported actions, limits, and external-service handoffs. Does not verify Canvas auth."""
         return envelope({"reads": ["courses", "home", "modules", "assignments", "grades", "syllabus", "pages", "files", "documents",
             "quizzes_metadata", "discussions", "announcements", "submission_feedback", "inbox", "planner", "calendar", "people", "groups",
-            "group_content", "file_quota", "notification_preferences", "favorites", "course_nicknames", "course_colors"],
+            "group_content", "file_quota", "notification_preferences", "favorites", "course_nicknames", "course_colors",
+            "course_invitations", "bookmarks", "what_if_grades"],
             "actions": ACTION_KINDS, "write_workflow": "Prepare exact payload; obtain user authorization; call the returned execute route with action_id.",
             "permission_groups": sorted(set(EXECUTE_ROUTES.values())),
             "client_approvals": "Client controls always allow/ask/deny. Server write scopes and Canvas permissions are also enforced.",
@@ -120,6 +121,12 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
         """Browse enrollments with Canvas-reported scores. invited_or_pending includes invitations; invited is a compatibility alias. Follows bounded pagination."""
         state = "invited_or_pending" if enrollment_state == "invited" else enrollment_state
         return _page(provider(), ListCourses(enrollment_state=state, include=["term", "total_scores"]), offset, limit)
+
+    @tool()
+    def canvas_course_invitations(state: Literal["invited", "rejected", "creation_pending"] = "invited",
+                                    offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        """Read your exact student enrollment IDs for course invitations, including future courses. Creation-pending enrollments cannot yet be accepted. Discovery is bounded at 1000 enrollments."""
+        return enrollments.list_invitations(provider(), state, offset, limit)
 
     @tool()
     def canvas_course_home(course_id: PositiveId, refresh: bool = False) -> dict[str, Any]:
@@ -188,6 +195,12 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
         """Read your fresh submission, attempts, instructor comments, rubric feedback and grade/current-submission alignment."""
         canvas = provider()
         return envelope(canvas.submissions.get(course_id, assignment_id), origin=canvas.config.base_url)
+
+    @tool()
+    def canvas_what_if_grades(course_id: PositiveId, assignment_id: PositiveId | None = None,
+                               offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        """Read your saved hypothetical scores separately from actual grades, for one assignment or a bounded course list. Does not calculate a substitute course total."""
+        return what_if_grades.read_what_if_grades(provider(), course_id, assignment_id, offset, limit)
 
     @tool()
     def canvas_discussion_entries(course_id: PositiveId, topic_id: PositiveId, entry_id: PositiveId | None = None,
@@ -390,6 +403,16 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
         raise ValueError("Choose favorite_courses, favorite_groups, nicknames or colors")
 
     @tool()
+    def canvas_bookmarks(bookmark_id: PositiveId | None = None, offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        """Read your saved Canvas bookmarks or one exact bookmark. URLs are metadata only; this does not fetch external destinations."""
+        canvas = provider()
+        if bookmark_id is not None:
+            if offset != 0 or limit != 30:
+                raise ValueError("Pagination applies only when listing bookmarks")
+            return bookmarks.get_bookmark(canvas, bookmark_id)
+        return bookmarks.list_bookmarks(canvas, offset, limit)
+
+    @tool()
     def canvas_course_summary(course_id: PositiveId, lookback_days: int = 14, lookahead_days: int = 7) -> dict[str, Any]:
         """Compose a current course catch-up with deadlines, feedback and announcements. Inspect its source coverage before conclusions."""
         if not 0 <= lookback_days <= 90 or not 0 <= lookahead_days <= 90:
@@ -427,8 +450,13 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
         if EXECUTE_ROUTES[receipt["kind"]] != route:
             raise ValueError("This prepared action belongs to a different permission group; follow its execute route")
         result = store.execute(canvas, tenant, action_id, authorize_write)
+        verification = result.get("result") or {}
+        coverage = {"complete": result["state"] == "succeeded", "verification": verification.get("verified", False)}
+        if isinstance(verification.get("coverage"), dict):
+            coverage.update(verification["coverage"])
+            coverage["complete"] = result["state"] == "succeeded" and coverage.get("complete") is True
         return envelope(result, origin=canvas.config.base_url, status=result["state"],
-                        coverage={"complete": result["state"] == "succeeded", "verification": (result.get("result") or {}).get("verified", False)})
+                        coverage=coverage)
 
     @tool(write=True, destructive=True)
     def canvas_submit_assignment(action_id: str) -> dict[str, Any]:
@@ -488,6 +516,31 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
     def canvas_create_discussion(action_id: str) -> dict[str, Any]:
         """Publish the exact prepared course or group discussion topic after authorization for its audience, title and message. Canvas must permit student topic creation."""
         return execute_as(action_id, "canvas_create_discussion")
+
+    @tool(write=True, destructive=True)
+    def canvas_respond_to_invitation(action_id: str) -> dict[str, Any]:
+        """Accept or decline the exact prepared student course invitation after authorization. This cannot delete an active enrollment or change another user's membership."""
+        return execute_as(action_id, "canvas_respond_to_invitation")
+
+    @tool(write=True, destructive=True)
+    def canvas_post_group_discussion(action_id: str) -> dict[str, Any]:
+        """Publish a prepared group discussion entry or reply after authorization for its exact audience and content. Never post merely to bypass an initial-post reading gate."""
+        return execute_as(action_id, "canvas_post_group_discussion")
+
+    @tool(write=True, destructive=True)
+    def canvas_manage_group_discussion(action_id: str) -> dict[str, Any]:
+        """Apply a prepared own group-entry edit/delete or group subscription, read-state or rating change after authorization. Attached-entry editing remains unsupported."""
+        return execute_as(action_id, "canvas_manage_group_discussion")
+
+    @tool(write=True, destructive=True)
+    def canvas_manage_bookmarks(action_id: str) -> dict[str, Any]:
+        """Create, edit, move or delete your exact prepared bookmark after authorization. Moving a bookmark can shift neighboring positions; links are never automatically opened."""
+        return execute_as(action_id, "canvas_manage_bookmarks")
+
+    @tool(write=True, destructive=True)
+    def canvas_update_what_if_grades(action_id: str) -> dict[str, Any]:
+        """Save/reset prepared hypothetical assignment scores or reset your course What-if scores after authorization. Never edits actual grades. Course-wide reset verification covers only Canvas-visible submissions; inspect coverage."""
+        return execute_as(action_id, "canvas_update_what_if_grades")
 
     @tool(write=True, destructive=True)
     def canvas_send_message(action_id: str) -> dict[str, Any]:
