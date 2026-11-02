@@ -25,6 +25,10 @@ PATTERNS = [re.compile(r"/Users/"), re.compile(r"bmcss\.instructure\.com", re.I)
 def source_files():
     for path in sorted(ROOT.rglob("*")):
         relative = path.relative_to(ROOT)
+        # Optional packages own isolated environments. Exclude those trees
+        # before inspecting their interpreter symlinks as release sources.
+        if any(p in {".venv", "__pycache__", "node_modules", "dist", "build"} or p.endswith(".egg-info") for p in relative.parts):
+            continue
         if path.is_symlink():
             if relative.parts[0] in {"src", "packages", "tests", "docs", "scripts", "skills", "packaging",
                                      ".agents", ".codex-plugin", ".claude-plugin"} or str(relative) in PLUGIN_FILES:
@@ -39,7 +43,7 @@ def source_files():
         if relative.parts[0] in {"src", "tests", "scripts", "docs", "skills", "packaging", ".github"}:
             allowed = allowed or path.suffix in {".py", ".md", ".json", ".html", ".css", ".js", ".yml", ".yaml"}
         if relative.parts[0] == "packages" and len(relative.parts) >= 3:
-            allowed = (len(relative.parts) == 3 and path.name in {"pyproject.toml", "README.md"}) or (
+            allowed = (len(relative.parts) == 3 and path.name in {"pyproject.toml", "README.md", "uv.lock"}) or (
                 relative.parts[2] in {"src", "tests"} and path.suffix == ".py")
         if allowed:
             yield path

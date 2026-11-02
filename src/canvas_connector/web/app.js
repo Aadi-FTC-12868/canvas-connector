@@ -1,6 +1,6 @@
 'use strict';
 const clients = {
-  chatgpt: {name:'ChatGPT', description:'Use your hosted connector address in ChatGPT’s custom MCP setup. Availability depends on your plan and workspace settings.', url:'https://developers.openai.com/api/docs/guides/custom-mcp-server', steps:['Open ChatGPT’s custom MCP server setup.','Paste the connector address and select OAuth.','Choose your school and sign in through Canvas.'], local:''},
+  chatgpt: {name:'ChatGPT', description:'Choose a personal connection from your computer or a hosted connector. Availability depends on your OpenAI account and workspace permissions.', url:'https://developers.openai.com/api/docs/guides/custom-mcp-server', steps:['Open ChatGPT’s custom MCP server setup.','Paste the connector address and select OAuth.','Choose your school and sign in through Canvas.'], local:''},
   claude: {name:'Claude', description:'Connect through Claude’s connector settings. Remote connections also work in supported Claude Desktop and Cowork experiences.', url:'https://claude.com/docs/connectors/building/authentication', steps:['Open Claude Settings, then Connectors, and add a custom connector.','Enter the connector address and start authorization.','Choose your school, select access, and sign in through Canvas.'], local:'Claude’s remote connectors need a reachable HTTPS endpoint, including when used from the desktop app.'},
   codex: {name:'Codex', description:'Use a hosted connection with OAuth, or launch the connector locally for your personal Canvas account.', url:'https://developers.openai.com/codex/mcp', steps:['Add your hosted endpoint: codex mcp add canvas --url <connector-address>','Sign in: codex mcp login canvas','Open a chat and ask for your Canvas dashboard.'], local:'For personal local use, register the full path to canvas-connector with the stdio argument and CANVAS_ENV_PATH pointing to your private credentials file.'},
   code: {name:'Claude Code', description:'Add the remote connector over HTTP, or use a personal local stdio server.', url:'https://code.claude.com/docs/en/mcp', steps:['Add your hosted endpoint: claude mcp add --transport http canvas <connector-address>','Run /mcp in Claude Code and authenticate Canvas.','Ask for your Canvas dashboard to check the connection.'], local:'Local alternative: claude mcp add --transport stdio canvas -- /absolute/path/canvas-connector stdio. Configure CANVAS_ENV_PATH privately before launch.'}
@@ -11,8 +11,11 @@ const pluginCommands = {
   codex: [`codex plugin marketplace add ${repository}.git`, 'codex plugin add canvas-connector-personal@built-by-aadi'],
   code: [`claude plugin marketplace add ${repository}.git`, 'claude plugin install canvas-connector-personal@built-by-aadi']
 };
-let downloads = {desktop:null, plugin:null};
+let downloads = {desktop:null, plugin:null, source:null};
 function showDownloads(client) {
+  document.querySelector('#tunnel-install').hidden = client !== 'chatgpt';
+  document.querySelector('#download-tunnel-source').hidden = !downloads.source;
+  document.querySelector('#tunnel-copy-status').textContent = '';
   document.querySelector('#desktop-install').hidden = !(downloads.desktop && client === 'claude');
   document.querySelector('#plugin-install').hidden = !['codex','code'].includes(client);
   document.querySelector('#download-plugin').hidden = !downloads.plugin;
@@ -58,6 +61,12 @@ tabs.forEach((tab, index) => {
     if(target){event.preventDefault();choose(target);target.focus();}
   });
 });
+document.querySelector('#copy-tunnel').addEventListener('click', async () => {
+  const input = document.querySelector('#tunnel-command');
+  const status = document.querySelector('#tunnel-copy-status');
+  try {await navigator.clipboard.writeText(input.value);status.textContent='Command copied. Run it from the extracted folder containing scripts/.';}
+  catch {input.select();status.textContent='Copy the selected command with your keyboard.';}
+});
 document.querySelector('#copy-plugin').addEventListener('click', async () => {
   const status = document.querySelector('#plugin-copy-status');
   const value = [document.querySelector('#plugin-register').value, document.querySelector('#plugin-add').value].join('\n');
@@ -72,9 +81,11 @@ document.querySelector('#copy').addEventListener('click', async () => {
   try {await navigator.clipboard.writeText(value);status.textContent='Connector address copied.';}
   catch {document.querySelector('#endpoint').select();status.textContent='Select the address and copy it with your keyboard.';}
 });
+choose(tabs.find(tab=>tab.getAttribute('aria-selected')==='true'));
 fetch('./connection.json', {credentials:'same-origin',cache:'no-store'}).then(r=>r.ok?r.json():null).then(config=>{
   const source = downloadTarget(config?.source_url, '.zip');
-  if(source){const link=document.querySelector('#download-source');link.href=source;link.hidden=false;}
+  downloads.source = source;
+  if(source){const link=document.querySelector('#download-source');link.href=source;link.hidden=false;document.querySelector('#download-tunnel-source').href=source;}
   downloads.desktop = downloadTarget(config?.desktop_bundle_url, '.mcpb');
   downloads.plugin = downloadTarget(config?.plugin_bundle_url, '.zip');
   if(downloads.desktop) document.querySelector('#download-desktop').href = downloads.desktop;

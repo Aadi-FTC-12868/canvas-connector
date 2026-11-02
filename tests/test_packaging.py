@@ -29,7 +29,8 @@ def test_bundle_is_allowlisted_reproducible_and_resolves_local_dependencies(tmp_
         names = set(bundle.namelist())
         assert {"manifest.json", "entrypoint.py", "LICENSE", "README-BUNDLE.md",
                 "src/canvas_connector/server.py", "packages/canvas-py/pyproject.toml",
-                "packages/canvas-mcp-v2/pyproject.toml"} <= names
+                "packages/canvas-mcp-v2/pyproject.toml", "packages/canvas-tunnel/uv.lock",
+                "packages/canvas-tunnel/src/canvas_tunnel/bridge.py"} <= names
         assert not any(part in {".env", ".venv", ".git", "tests", "node_modules", "__pycache__"}
                        for name in names for part in Path(name).parts)
         project = tomllib.loads(bundle.read("pyproject.toml").decode())
@@ -37,11 +38,29 @@ def test_bundle_is_allowlisted_reproducible_and_resolves_local_dependencies(tmp_
             "canvas-py": {"path": "packages/canvas-py"},
             "canvas-mcp-v2": {"path": "packages/canvas-mcp-v2"}}
         assert "mcp==1.27.0" in project["tool"]["uv"]["constraint-dependencies"]
+        tunnel = tomllib.loads(bundle.read("packages/canvas-tunnel/pyproject.toml").decode())
+        assert tunnel["project"]["dependencies"] == ["mcp==2.3.0"]
         manifest = json.loads(bundle.read("manifest.json"))
         assert manifest["user_config"]["canvas_token"]["sensitive"] is True
         assert manifest["user_config"]["allow_writes"]["default"] is False
         for name, expected in json.loads(bundle.read("BUNDLE-MANIFEST.json")).items():
             assert hashlib.sha256(bundle.read(name)).hexdigest() == expected
+
+
+def test_source_allowlist_excludes_nested_environments_but_rejects_source_symlinks(tmp_path, monkeypatch):
+    checker = load_file("release_allowlist_isolated", ROOT / "scripts/release_check.py")
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    package = tmp_path / "packages/canvas-tunnel"
+    environment = package / ".venv/bin"
+    environment.mkdir(parents=True)
+    (environment / "python").symlink_to("/nonexistent/private-interpreter")
+    (package / "uv.lock").write_text("version = 1\n")
+    assert list(checker.source_files()) == [package / "uv.lock"]
+    source = package / "src"
+    source.mkdir()
+    (source / "borrowed.py").symlink_to("/nonexistent/private-source")
+    with pytest.raises(ValueError, match="Symlink"):
+        list(checker.source_files())
 
 
 @pytest.mark.parametrize("setting,expected", [(None, False), ("false", False), ("true", True)])

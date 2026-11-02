@@ -48,7 +48,7 @@ def bundle_contents() -> dict[str, bytes]:
         parts = Path(name).parts
         runtime = parts[0] in {"src", "skills"}
         dependency = (parts[0] == "packages" and len(parts) >= 3 and
-                      (parts[2] == "src" or (len(parts) == 3 and parts[2] in {"pyproject.toml", "README.md"})))
+                      (parts[2] == "src" or (len(parts) == 3 and parts[2] in {"pyproject.toml", "README.md", "uv.lock"})))
         if runtime or dependency or name in {"pyproject.toml", "README.md", "LICENSE", "SECURITY.md", "requirements.lock"}:
             result[name] = path.read_bytes()
     manifest = json.loads(allowed["packaging/mcpb/manifest.json"].read_text())

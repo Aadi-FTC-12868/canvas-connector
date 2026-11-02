@@ -1,12 +1,12 @@
 # Client compatibility
 
-Documentation checked November 1, 2026. A supported protocol is not proof of a completed sign-in in every client. See [VALIDATION.md](VALIDATION.md) for the integration tests actually run.
+Documentation checked November 2, 2026. A supported protocol is not proof of a completed sign-in in every client. See [VALIDATION.md](VALIDATION.md) for the integration tests actually run.
 
 The portable interface is an MCP server at an HTTPS `/mcp` endpoint with OAuth. Local use has a separate stdio entrypoint. The same Canvas account permissions apply in either mode.
 
 | Client | Connection path | Installation and limitations |
 | --- | --- | --- |
-| ChatGPT | Remote Streamable HTTP with OAuth | Add a custom MCP server in ChatGPT Plugins, enter its URL, finish authorization, then install the resulting plugin. Workspace controls can limit availability. |
+| ChatGPT | Hosted Streamable HTTP with OAuth, or personal Secure MCP Tunnel to local stdio | Add a custom MCP server in ChatGPT Plugins using Server URL or Tunnel, finish applicable authentication and install the plugin. The optional personal adapter supports both protocol lifecycles on macOS/Linux. Tunnel and workspace access are separate account gates; see the [personal guide](PERSONAL-CHATGPT.md). |
 | Codex | Remote Streamable HTTP with OAuth, or local stdio/plugin | Configure the server, then run `codex mcp login canvas` for remote OAuth. The GitHub marketplace or downloadable ZIP bundles the connector and skill for personal use. |
 | Claude web, Desktop, mobile, Cowork | Remote Streamable HTTP with OAuth | Add the endpoint through Customize → Connectors. Remote requests originate from Anthropic's infrastructure, including when using Desktop or Cowork. |
 | Claude Desktop local server | Local stdio through the `.mcpb` extension | Download the personal extension and install it in Desktop's extension settings. This is a separate installation from an account's remote connector. |
@@ -38,7 +38,7 @@ Both catalogs use `./` to select the repository root. UV resolves `canvas-py` an
 
 ## Packaged personal downloads
 
-The source release can build two local artifacts. Both are for the user's own account. They do not provide a public hosted Canvas sign-in or connect cloud/mobile sessions. Institutions can restrict API access; hosted multi-user onboarding still needs institution-authorized OAuth.
+The source release can build two local artifacts. Both are for the user's own account. They do not provide a public hosted Canvas sign-in or automatically connect cloud/mobile sessions. The separate personal tunnel setup can connect ChatGPT through the running local adapter. Institutions can restrict API access; hosted multi-user onboarding still needs institution-authorized OAuth.
 
 | Artifact | Install path | Runtime and account setup |
 | --- | --- | --- |
@@ -60,6 +60,12 @@ Until a directory listing exists, hosted ChatGPT and Claude buttons open setup i
 The website's “Open in Codex after adding marketplace” link is `codex://plugins/install/canvas-connector-personal?marketplace=built-by-aadi`. It requires a marketplace that the app already knows. If Codex cannot find it, the link opens the Plugins page; it cannot register the GitHub repository. See [desktop deep links](https://learn.chatgpt.com/docs/app/commands). No universal URL that installs an arbitrary custom server in ChatGPT or Claude with prefilled connection details is claimed.
 
 For Claude, a plugin can bundle the MCP configuration and companion skill; custom connectors and reviewed directory listings remain separate distribution paths. See [Claude distribution options](https://claude.com/docs/connectors/building) and [plugin packaging](https://claude.com/docs/plugins/build). Merely hosting this repository does not create either directory listing.
+
+## Optional personal Secure MCP Tunnel
+
+The source release includes an isolated MCP 2.3.0 facade and a guided setup runner. It forwards to one initialized MCP 1.27 core child, preserving existing tools, action receipts and continuation behavior. Both modern self-contained and legacy requests passed synthetic testing through the official local tunnel client. This does not verify an actual ChatGPT account connection. The core and hosted dependencies remain separate; the optional facade supports macOS/Linux. See [setup, bounds and recovery](PERSONAL-CHATGPT.md).
+
+The website offers the source download and runner command in its ChatGPT tab. The runner does not register a hosted tunnel or install a ChatGPT plugin. Users must control tunnel access, enter credentials privately and complete those account steps. Personal PAT use stays in the local stdio child; it is not multi-user hosted onboarding. [OpenAI tunnel guide](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels).
 
 ## Authentication contract
 

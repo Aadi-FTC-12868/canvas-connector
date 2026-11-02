@@ -43,6 +43,26 @@ Never place a token in a chat or public configuration.
 This JSON format applies to clients accepting `mcpServers`; Codex uses its own
 MCP configuration or `codex mcp add`. See the [client guide](docs/COMPATIBILITY.md).
 
+## Personal ChatGPT connection
+
+If your OpenAI account can create/use Secure MCP Tunnels and add custom MCP
+servers in ChatGPT, run the optional guided setup from this source checkout:
+
+```sh
+python3 scripts/start_personal_tunnel.py --profile canvas-personal
+```
+
+Install UV and the official tunnel client first. The runner supports macOS/Linux,
+keeps credentials in private local input/configuration, defaults writes off, and
+runs the isolated compatibility adapter. Your computer must remain running.
+Use `--setup-only` to prepare locally without a runtime key or an active tunnel.
+Keep the source folder in place for later runs; unchanged runner-owned profiles
+are reused, and the OpenAI runtime key is never saved.
+Keep tunnel access limited to you: it uses one Canvas identity. No public Canvas
+OAuth service is needed for this personal route. Account permissions and actual
+ChatGPT sign-in are separate from the tested local transport. See the
+[personal ChatGPT guide](docs/PERSONAL-CHATGPT.md).
+
 ## Install from GitHub
 
 Install UV and your assistant's command-line app first. For Codex:

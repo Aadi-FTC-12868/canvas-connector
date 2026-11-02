@@ -27,7 +27,7 @@ from canvas_py.endpoints.file_uploads import UploadContext
 from canvas_py.endpoints.submissions import SubmitFileUpload
 
 from .responses import dump
-from . import module_progress, student_actions, personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards
+from . import module_progress, student_actions, personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards, inbox_state, inbox_messages, inbox_attachments
 
 PositiveId = Annotated[int, Field(gt=0, strict=True)]
 Text = Annotated[str, Field(min_length=1, max_length=100_000)]
@@ -179,14 +179,16 @@ ActionRequest = Annotated[Union[SubmitText, SubmitURL, SubmitFiles, SubmissionCo
     bookmarks.BookmarkActionTypes, what_if_grades.WhatIfActionTypes, mastery_paths.MasteryPathActionTypes,
     group_memberships.GroupMembershipActionTypes, discussion_attachments.DiscussionAttachmentActionTypes,
     feedback.FeedbackActionTypes, appointments.AppointmentActionTypes, self_profile.SelfProfileActionTypes,
-    dashboard_cards.DashboardCardActionTypes], Field(discriminator="kind")]
+    dashboard_cards.DashboardCardActionTypes, inbox_state.InboxStateActionTypes,
+    inbox_messages.InboxMessageActionTypes, inbox_attachments.InboxAttachmentActionTypes], Field(discriminator="kind")]
 ACTION_ADAPTER = TypeAdapter(ActionRequest)
 ACTION_KINDS = ["upload", "submit_files", "submit_text", "submit_url", "submission_comment",
                 "discussion_post", "discussion_reply", "inbox_send", "inbox_reply", "inbox_update",
                 "planner_create", "planner_update", "planner_delete", "planner_override", *student_actions.KINDS, *module_progress.KINDS,
                 *personal_files.KINDS, *preferences.KINDS, *group_content.KINDS, *enrollments.KINDS,
                 *bookmarks.KINDS, *what_if_grades.KINDS, *mastery_paths.KINDS, *group_memberships.KINDS,
-                *discussion_attachments.KINDS, *feedback.KINDS, *appointments.KINDS, *self_profile.KINDS, *dashboard_cards.KINDS]
+                *discussion_attachments.KINDS, *feedback.KINDS, *appointments.KINDS, *self_profile.KINDS, *dashboard_cards.KINDS,
+                *inbox_state.KINDS, *inbox_messages.KINDS, *inbox_attachments.KINDS]
 EXECUTE_ROUTES = {"upload": "canvas_upload_file", "submission_comment": "canvas_add_submission_comment",
     **{kind: "canvas_submit_assignment" for kind in ("submit_files", "submit_text", "submit_url")},
     **{kind: "canvas_post_discussion" for kind in ("discussion_post", "discussion_reply")},
@@ -195,7 +197,8 @@ EXECUTE_ROUTES = {"upload": "canvas_upload_file", "submission_comment": "canvas_
     **{kind: "canvas_update_planner" for kind in ("planner_create", "planner_update", "planner_delete", "planner_override")},
     **student_actions.ROUTES, **module_progress.ROUTES, **personal_files.ROUTES,
     **preferences.ROUTES, **group_content.ROUTES, **enrollments.ROUTES, **bookmarks.ROUTES, **what_if_grades.ROUTES, **mastery_paths.ROUTES, **group_memberships.ROUTES,
-    **discussion_attachments.ROUTES, **feedback.ROUTES, **appointments.ROUTES, **self_profile.ROUTES, **dashboard_cards.ROUTES}
+    **discussion_attachments.ROUTES, **feedback.ROUTES, **appointments.ROUTES, **self_profile.ROUTES, **dashboard_cards.ROUTES,
+    **inbox_state.ROUTES, **inbox_messages.ROUTES, **inbox_attachments.ROUTES}
 
 
 class Request(CanvasRequest[Any]):
@@ -499,7 +502,9 @@ class ActionStore:
 
     def _snapshot(self, canvas: Canvas, owner: str, p: dict) -> dict:
         kind = p["kind"]
-        for module in (personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards):
+        if kind in inbox_messages.KINDS:
+            return inbox_messages.snapshot(canvas, p, files=self._conversation_uploaded(canvas, owner, p))
+        for module in (personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards, inbox_state, inbox_attachments):
             if kind in module.KINDS:
                 return module.snapshot(canvas, p)
         if kind == "upload" and p.get("parent_folder_id") is not None:
@@ -568,6 +573,34 @@ class ActionStore:
                               "bytes": target["bytes"], "sha256": target["sha256"]})
         if len({f["id"] for f in files}) != len(files):
             raise ValueError("Receipts must reference distinct Canvas files")
+        return files
+
+    def _conversation_uploaded(self, canvas: Canvas, owner: str, p: dict) -> list[dict]:
+        ids = p.get("upload_action_ids", [])
+        if len(ids) > 20 or len(set(ids)) != len(ids):
+            raise ValueError("Choose at most 20 distinct conversation upload receipts")
+        files = []
+        keys = ("id", "actor_id", "folder_id", "filename", "stored_filename", "bytes", "sha256", "destination")
+        with self._atomic():
+            for action_id in ids:
+                record = self._get(canvas, owner, action_id)
+                if record["kind"] != "conversation_attachment_upload" or record["state"] != "succeeded":
+                    raise ValueError("Each Inbox file needs a verified conversation attachment upload receipt")
+                review = record["review"]
+                target, result = review.get("target", {}), record.get("result") or {}
+                attachment = target.get("attachment", {})
+                if (result.get("verified") is not True or result.get("message_sent") is not False
+                        or result.get("destination") != "conversation_attachment"
+                        or result.get("actor_id") != target.get("actor_id")
+                        or result.get("bytes") != attachment.get("bytes")
+                        or result.get("sha256") != attachment.get("sha256")
+                        or result.get("requested_filename") != review.get("filename")
+                        or target.get("folder_id") is not None and result.get("folder_id") != target["folder_id"]
+                        or any(key not in result for key in keys)):
+                    raise ValueError("Conversation upload receipt does not match the reviewed attachment")
+                files.append({key: result[key] for key in keys})
+        if len({file["id"] for file in files}) != len(files):
+            raise ValueError("Conversation receipts must reference distinct files")
         return files
 
     def _existing_preparation(self, canvas: Canvas, owner: str, identity: str,
@@ -793,7 +826,7 @@ class ActionStore:
 
     def _perform(self, canvas: Canvas, p: dict, target: dict) -> dict:
         kind = p["kind"]
-        for module in (personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards):
+        for module in (personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards, inbox_state, inbox_messages, inbox_attachments):
             if kind in module.KINDS:
                 return module.perform(canvas, p, target)
         if kind in module_progress.KINDS:

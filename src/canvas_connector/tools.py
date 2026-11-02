@@ -21,7 +21,7 @@ from canvas_py.navigation import CourseSection, ItemType, AssetType
 from mcp.types import ToolAnnotations
 
 from .actions import ActionStore, ActionRequest, ACTION_KINDS, EXECUTE_ROUTES, PositiveId, Request
-from . import group_content, preferences, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, feedback, appointments, self_profile, dashboard_cards
+from . import group_content, preferences, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, feedback, appointments, self_profile, dashboard_cards, inbox_messages
 from .responses import ResponseStore, dump, envelope, external_link, failure, window
 
 
@@ -94,7 +94,7 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
             "quizzes_metadata", "discussions", "announcements", "submission_feedback", "inbox", "planner", "calendar", "people", "groups",
             "group_content", "file_quota", "notification_preferences", "favorites", "course_nicknames", "course_colors",
             "course_invitations", "bookmarks", "what_if_grades", "mastery_path_options", "group_membership_options", "feedback_read_state", "appointment_groups", "appointments",
-            "self_profile", "user_settings", "dashboard_cards"],
+            "self_profile", "user_settings", "dashboard_cards", "inbox_recipients"],
             "actions": ACTION_KINDS, "write_workflow": "Prepare exact payload; obtain user authorization; call the returned execute route with action_id.",
             "permission_groups": sorted(set(EXECUTE_ROUTES.values())),
             "client_approvals": "Client controls always allow/ask/deny. Server write scopes and Canvas permissions are also enforced.",
@@ -447,6 +447,14 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
         return self_profile.read_profile(provider())
 
     @tool()
+    def canvas_inbox_recipients(search: str | None = None, context: str | None = None,
+                               user_id: PositiveId | None = None, from_conversation_id: PositiveId | None = None,
+                               offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        """Find Canvas-messageable recipients by name, exact user ID or course/group context. Use returned user IDs and preserve incomplete/denied results; visibility elsewhere does not prove messageability."""
+        return inbox_messages.read_recipients(provider(), search=search, context=context, user_id=user_id,
+                                             from_conversation_id=from_conversation_id, offset=offset, limit=limit)
+
+    @tool()
     def canvas_user_settings() -> dict[str, Any]:
         """Read your supported discussion and navigation display preferences. This does not change discussion read state or notification delivery."""
         return self_profile.read_settings(provider())
@@ -633,8 +641,18 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
 
     @tool(write=True)
     def canvas_update_inbox(action_id: str) -> dict[str, Any]:
-        """Apply the prepared read/unread/archive change after user authorization. This permission group cannot send messages."""
+        """Apply the prepared read/unread/archive, star or group-subscription change after authorization. Inspect subscription's native read-state effects. This group cannot send or delete messages."""
         return execute_as(action_id, "canvas_update_inbox")
+
+    @tool(write=True, destructive=True)
+    def canvas_delete_inbox_content(action_id: str) -> dict[str, Any]:
+        """Delete the prepared messages or conversation from your own Inbox view after authorization. This does not recall sent content or delete recipients' copies; whole-thread deletion can include newly arrived messages."""
+        return execute_as(action_id, "canvas_delete_inbox_content")
+
+    @tool(write=True)
+    def canvas_upload_inbox_attachment(action_id: str) -> dict[str, Any]:
+        """Upload the prepared bytes to your native Inbox attachment folder after authorization. This does not send anything; use its verified receipt in a separately prepared message or reply."""
+        return execute_as(action_id, "canvas_upload_inbox_attachment")
 
     @tool(write=True, destructive=True)
     def canvas_update_planner(action_id: str) -> dict[str, Any]:

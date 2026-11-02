@@ -113,6 +113,10 @@ class RequestUploadTarget(CanvasRequest[UploadTarget]):
     """
 
     method: ClassVar[str] = "POST"
+    # Target creation can initialize folders and pending files. Confirmation
+    # can finalize them; neither step is safe to replay after uncertainty.
+    allow_retries = False
+    allow_redirects = False
 
     def __init__(
         self,
@@ -194,6 +198,9 @@ class ConfirmUpload(CanvasRequest[CanvasFile]):
     Current documentation requires GET; the legacy empty POST is available
     for older create_success endpoints that reject GET.
     """
+
+    allow_retries = False
+    allow_redirects = False
 
     def __init__(self, confirm_url: str, *, method: Literal["GET", "POST"] = "GET"):
         self.confirm_url = confirm_url

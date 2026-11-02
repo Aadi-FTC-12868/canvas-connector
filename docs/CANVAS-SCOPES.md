@@ -1,6 +1,6 @@
 # Canvas developer-key scope manifest
 
-This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, `module_progress.py`, `personal_files.py`, `preferences.py`, `group_content.py`, `enrollments.py`, `bookmarks.py`, `what_if_grades.py`, `mastery_paths.py`, `group_memberships.py`, `discussion_attachments.py`, `feedback.py`, `appointments.py`, `self_profile.py`, and `dashboard_cards.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
+This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, `module_progress.py`, `personal_files.py`, `preferences.py`, `group_content.py`, `enrollments.py`, `bookmarks.py`, `what_if_grades.py`, `mastery_paths.py`, `group_memberships.py`, `discussion_attachments.py`, `feedback.py`, `appointments.py`, `self_profile.py`, `dashboard_cards.py`, `inbox_state.py`, `inbox_messages.py`, and `inbox_attachments.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
 
 Canvas developer-key scopes use the exact route-template spelling below. For example, an API call containing `self` can correspond to a scope containing `:user_id`; keep Canvas's documented placeholder names rather than substituting real IDs. These upstream scopes are separate from this connector's `canvas:read` and `canvas:write` grants. An institutional administrator enables the upstream scopes. See [Canvas developer-key configuration](https://developerdocs.instructure.com/services/canvas/oauth2/file.developer_keys).
 
@@ -328,3 +328,20 @@ url:POST|/api/v1/calendar_events/:id/reservations
 ```
 
 Discovery requests reservable appointment groups. Complete slot inventory uses the source-supported `appointment_group_ID` calendar context with explicit date bounds, rather than `all_events=true`. Reservation writes bind the exact student or verified candidate group; cancellation targets only a verified reservation child. Reserve preserves existing bookings. Reschedule uses `cancel_existing=true`, which replaces all bookings for that participant in the appointment group, so the adapter requires exactly one observed booking at preflight. Canvas provides no atomic expected-count guard: concurrent bookings may also be cancelled. Reschedule readback therefore reports incomplete coverage for the complete cancelled set, even when the known old deletion, new booking and final inventory are verified. No appointment-group creation, slot modification or arbitrary-participant route is exposed. [Appointment Groups API](https://developerdocs.instructure.com/services/canvas/resources/appointment_groups), [Calendar Events API](https://developerdocs.instructure.com/services/canvas/resources/calendar_events), [calendar controller](https://github.com/instructure/canvas-lms/blob/master/app/controllers/calendar_events_api_controller.rb), [reservation implementation](https://github.com/instructure/canvas-lms/blob/master/app/models/calendar_event.rb).
+
+
+## Advanced student Inbox workflows
+
+These additions reuse the current-profile, conversation list/show/create/add-message/update, course/group detail/enrollment and personal file upload/read scopes above. New scopes are:
+
+```text
+url:GET|/api/v1/search/recipients
+url:POST|/api/v1/conversations/:id/remove_messages
+url:DELETE|/api/v1/conversations/:id
+```
+
+Every thread read sets `auto_mark_as_read=false`. Star/subscription affect the current user's conversation participant; subscription can change cached read state and latest-message time. Deletion removes the current user's view, not recipients' copies. Empty-thread verification combines the native zero-count acknowledgement with independent non-marking absence and complete bounded own-list checks; a bare 404 is insufficient.
+
+Native forwarding uses `forwarded_message_ids` on conversation creation, with exact reviewed source content and recipients. Selective replies use `recipients`, `included_messages` and verified `attachment_ids`; they never invoke `add_recipients`, which can share unreviewed deleted history. Included history may restore its original author's copy. Sender-side reads cannot prove each recipient's active historical visibility, so that coverage stays incomplete. Exact recipient searches and student-role checks prevent native audience expansion in unsupported instructor/account contexts.
+
+Conversation uploads use the ordinary user upload route with a fixed verified folder ID, or the fixed `conversation attachments` path when absent. Complete own-folder discovery rejects duplicate native folder names. Byte verification and owner-bound receipts precede sending; upload target/finalization requests do not automatically retry or follow redirects. No arbitrary personal-file ID, admin deletion, sent-message edit or whole-history addition is exposed. [Conversations API](https://developerdocs.instructure.com/services/canvas/resources/conversations), [Search API](https://developerdocs.instructure.com/services/canvas/resources/search), [Files](https://developerdocs.instructure.com/services/canvas/resources/files), [native message/history behavior](https://github.com/instructure/canvas-lms/blob/master/app/models/conversation.rb), [participant behavior](https://github.com/instructure/canvas-lms/blob/master/app/models/conversation_participant.rb).
