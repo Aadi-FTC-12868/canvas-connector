@@ -1,6 +1,6 @@
 # Canvas developer-key scope manifest
 
-This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, and `module_progress.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
+This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, `module_progress.py`, `personal_files.py`, `preferences.py`, and `group_content.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
 
 Canvas developer-key scopes use the exact route-template spelling below. For example, an API call containing `self` can correspond to a scope containing `:user_id`; keep Canvas's documented placeholder names rather than substituting real IDs. These upstream scopes are separate from this connector's `canvas:read` and `canvas:write` grants. An institutional administrator enables the upstream scopes. See [Canvas developer-key configuration](https://developerdocs.instructure.com/services/canvas/oauth2/file.developer_keys).
 
@@ -43,6 +43,7 @@ url:GET|/api/v1/conversations/:id
 url:GET|/api/v1/planner/items
 url:GET|/api/v1/planner_notes
 url:GET|/api/v1/users/self/activity_stream
+url:GET|/api/v1/users/self/activity_stream/summary
 url:GET|/api/v1/calendar_events
 url:GET|/api/v1/courses/:course_id/users
 url:GET|/api/v1/courses/:course_id/groups
@@ -57,6 +58,7 @@ Sources: [assignments](https://developerdocs.instructure.com/services/canvas/res
 url:GET|/api/v1/files/:id
 url:GET|/api/v1/courses/:course_id/files
 url:GET|/api/v1/users/:user_id/files
+url:GET|/api/v1/users/:user_id/files/quota
 url:GET|/api/v1/folders/:id/files
 url:GET|/api/v1/courses/:course_id/folders
 url:GET|/api/v1/users/:user_id/folders
@@ -114,3 +116,89 @@ Sources: [personal file uploads](https://developerdocs.instructure.com/services/
 Upload finalization follows Canvas's validated returned confirmation URL. Some installations use an older `create_success` confirmation route. The static list above does not claim to enumerate every installation-specific finalization permission; exercise a small upload in a test course with the exact developer key before enabling uploads publicly. Do not broaden the key to unrelated administration endpoints to hide a denied call.
 
 The submission-update scope also exists for grading, but this connector's action only sends its supported comment payload; Canvas still enforces the student's underlying permissions. No course/assignment creation, grade editing, quiz attempt, user administration, or arbitrary API-call tool is enabled by this manifest.
+
+## Personal file and folder management
+
+The `canvas_manage_personal_files` group prepares folder creation, file/folder rename or move, file deletion, and empty-folder deletion. These additional routes are restricted in the adapter to the authenticated user's ordinary personal storage. The exact metadata reads establish ownership and root ancestry before mutation and verify the result afterward.
+
+```text
+url:GET|/api/v1/users/:user_id/files/:id
+url:GET|/api/v1/users/:user_id/folders/:id
+url:GET|/api/v1/folders/:id
+url:POST|/api/v1/users/:user_id/folders
+url:PUT|/api/v1/files/:id
+url:DELETE|/api/v1/files/:id
+url:PUT|/api/v1/folders/:id
+url:DELETE|/api/v1/folders/:id
+```
+
+`canvas_get_folder` uses the general folder GET. Personal actions use the user-scoped reads with literal `self`; `root` is an allowed folder `:id`. Chosen-folder uploads remain in `canvas_upload_file`, using the existing `url:POST|/api/v1/users/:user_id/files` scope with a validated `parent_folder_id`. They do not require a folder-upload scope. There is no forced or recursive deletion, course/group file mutation, or replacement of an existing file. Canvas's ordinary file representation omits edit/delete permissions; the adapter honors any returned permissions and preserves server-side denial for submitted files. [Files and folders API](https://developerdocs.instructure.com/services/canvas/resources/files)
+
+## Notification preferences
+
+`canvas_communication_channels` and `canvas_notification_preferences` use only these GET routes, in addition to the current-user profile scope. `canvas_update_notifications` is a separate mutation group for one existing channel and one exact notification.
+
+```text
+url:GET|/api/v1/users/:user_id/communication_channels
+url:GET|/api/v1/users/:user_id/communication_channels/:communication_channel_id/notification_preferences
+url:PUT|/api/v1/users/self/communication_channels/:communication_channel_id/notification_preferences/:notification
+```
+
+The single PUT sends only `notification_preferences[frequency]`; `immediately`, `daily`, `weekly`, and `never` are the allowed values. A `never` review explicitly identifies notification suppression. The list GET independently confirms the new frequency and unchanged other effective preferences. No channel creation/deletion, category update, or bulk preference scope is requested. [Communication channels](https://developerdocs.instructure.com/services/canvas/resources/communication_channels), [notification preferences](https://developerdocs.instructure.com/services/canvas/resources/notification_preferences).
+
+Canvas's implementation can lazily persist missing default policy rows during its notification list GET. This is server housekeeping without an effective frequency change; connector read tools call no setters. [Official notification policy source](https://github.com/instructure/canvas-lms/blob/master/app/models/notification_policy.rb), [notification controller](https://github.com/instructure/canvas-lms/blob/master/app/controllers/notification_preferences_controller.rb).
+
+## Dashboard preferences
+
+`canvas_preferences` reads own favorites/default selections, course nicknames, or course colors. `canvas_update_preferences` prepares a single favorite add/remove, nickname set/delete, or course color change. Course actions verify an actual current-user enrollment; group actions verify accepted self membership. These operations also need the profile/course reads above and the group reads in the next section.
+
+```text
+url:GET|/api/v1/courses/:course_id/enrollments
+url:GET|/api/v1/users/self/favorites/courses
+url:GET|/api/v1/users/self/favorites/groups
+url:POST|/api/v1/users/self/favorites/courses/:id
+url:DELETE|/api/v1/users/self/favorites/courses/:id
+url:POST|/api/v1/users/self/favorites/groups/:id
+url:DELETE|/api/v1/users/self/favorites/groups/:id
+url:GET|/api/v1/users/self/course_nicknames
+url:GET|/api/v1/users/self/course_nicknames/:course_id
+url:PUT|/api/v1/users/self/course_nicknames/:course_id
+url:DELETE|/api/v1/users/self/course_nicknames/:course_id
+url:GET|/api/v1/users/:id/colors
+url:PUT|/api/v1/users/:id/colors/:asset_string
+```
+
+Enrollment requests filter to the verified current-user ID. Color writes fix the asset string to `course_<validated course_id>` and leave other colors intact. No dashboard-position, favorite reset, nickname clear-all, arbitrary profile, or custom-data mutation scope is used. [Favorites](https://developerdocs.instructure.com/services/canvas/resources/favorites), [users](https://developerdocs.instructure.com/services/canvas/resources/users), [enrollments](https://developerdocs.instructure.com/services/canvas/resources/enrollments).
+
+Favorite-list membership can reflect Canvas default selections. Verification instead reads the exact course/group with `include[]=favorites` and requires a boolean `is_favorite`. Group-show's include is implemented by the official serializer but absent from that endpoint's documented include list; an installation omitting it is unsupported for group favorite mutation. [Official group serializer](https://github.com/instructure/canvas-lms/blob/master/lib/api/v1/group.rb).
+
+## Group content and student discussion creation
+
+Group read tools require accepted current-user membership and preserve Canvas locks, initial-post gates, and visibility restrictions. They issue GET requests only, without joining, marking read, or posting. Their additional scopes are:
+
+```text
+url:GET|/api/v1/groups/:group_id
+url:GET|/api/v1/groups/:group_id/users/:user_id
+url:GET|/api/v1/groups/:group_id/users
+url:GET|/api/v1/groups/:group_id/pages
+url:GET|/api/v1/groups/:group_id/pages/:url_or_id
+url:GET|/api/v1/groups/:group_id/discussion_topics
+url:GET|/api/v1/groups/:group_id/discussion_topics/:topic_id
+url:GET|/api/v1/groups/:group_id/discussion_topics/:topic_id/entries
+url:GET|/api/v1/groups/:group_id/discussion_topics/:topic_id/entries/:entry_id/replies
+url:GET|/api/v1/groups/:group_id/files
+url:GET|/api/v1/groups/:group_id/files/:id
+url:GET|/api/v1/groups/:group_id/folders
+url:GET|/api/v1/groups/:group_id/folders/:id
+```
+
+`canvas_create_discussion` is a separate mutation group for a plain course/group topic with a reviewed audience, title, and message. It requires a confirmed `create_discussion_topic` permission and verifies a new topic by ID, current author, and exact text. Permission fallback and creation use:
+
+```text
+url:GET|/api/v1/courses/:course_id/permissions
+url:GET|/api/v1/groups/:group_id/permissions
+url:POST|/api/v1/courses/:course_id/discussion_topics
+url:POST|/api/v1/groups/:group_id/discussion_topics
+```
+
+Course topic readback uses the existing course-discussion GET scope; group readback uses the group-discussion GET above. This adds no group creation/membership management, announcement or graded-topic creation, group-file writes, or quiz-attempt scope. [Groups and memberships](https://developerdocs.instructure.com/services/canvas/resources/groups), [course permissions](https://developerdocs.instructure.com/services/canvas/resources/courses), [discussion topics](https://developerdocs.instructure.com/services/canvas/resources/discussion_topics), [pages](https://developerdocs.instructure.com/services/canvas/resources/pages), [files](https://developerdocs.instructure.com/services/canvas/resources/files).

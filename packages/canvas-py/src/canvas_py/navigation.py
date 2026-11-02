@@ -32,7 +32,7 @@ SECTIONS = set(CourseSection.__args__)
 ITEM_TYPES = set(ItemType.__args__)
 ASSET_TYPES = set(AssetType.__args__)
 _MODULE_TYPES = {"Assignment": "assignment", "Page": "page", "File": "file", "Quiz": "quiz", "Discussion": "discussion"}
-_SUMMARY_FIELDS = ("id", "page_id", "name", "title", "display_name", "course_code", "type", "position", "indent", "due_at", "unlock_at", "lock_at", "locked_for_user", "lock_explanation", "hidden_for_user", "state", "workflow_state", "items_count", "published", "points_possible", "submission", "completion_requirement", "content_details", "url", "html_url", "content_id", "page_url", "module_id", "external_url")
+_SUMMARY_FIELDS = ("id", "page_id", "name", "title", "display_name", "course_code", "type", "position", "indent", "due_at", "unlock_at", "lock_at", "locked_for_user", "lock_explanation", "hidden_for_user", "state", "workflow_state", "items_count", "published", "points_possible", "submission", "completion_requirement", "content_details", "url", "html_url", "content_id", "page_url", "module_id", "external_url", "prerequisite_module_ids", "require_sequential_progress", "requirement_type", "completed_at")
 
 
 def _dump(value: Any) -> Any:
@@ -387,7 +387,7 @@ class CanvasNavigation:
         if page:
             return {"status": "supported", "open": self._route(course_id, "page", page[1])}
         if tail.startswith("external_tools/"):
-            return {"status": "external", "reason": "LTI launch requires the Canvas browser session."}
+            return {"status": "external", "reason": "External-tool interaction is not implemented here; open it through Canvas or a supported browser/provider integration."}
         return {"status": "unsupported", "reason": "This Canvas route requires browser navigation."}
 
     def open_url(self, url: str, *, refresh: bool = False) -> dict[str, Any]:

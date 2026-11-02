@@ -66,6 +66,21 @@ def test_modules_without_item_include_does_not_fetch_items():
     assert result["data"]["items"][0]["open"]["item_type"] == "module"
 
 
+def test_module_overview_preserves_progression_and_completion_context():
+    def handler(request):
+        assert request.method == "GET"
+        assert request.url.path == "/api/v1/courses/1/modules"
+        return httpx.Response(200, json=[{"id": 10, "prerequisite_module_ids": [4],
+            "require_sequential_progress": False, "requirement_type": "one",
+            "state": "completed", "completed_at": "2026-01-02T03:04:05Z"}])
+    result = make_canvas(handler).navigation.browse_course(1)
+    module = result["data"]["items"][0]
+    assert module["prerequisite_module_ids"] == [4]
+    assert module["require_sequential_progress"] is False
+    assert module["requirement_type"] == "one"
+    assert module["state"] == "completed" and module["completed_at"].startswith("2026-01-02T03:04:05")
+
+
 def test_dashboard_home_page_item_and_links_follow_typed_navigation():
     def handler(request):
         path = request.url.path

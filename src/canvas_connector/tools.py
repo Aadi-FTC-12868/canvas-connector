@@ -11,18 +11,21 @@ from canvas_py import Canvas
 from canvas_py._errors import CanvasError
 from canvas_py.documents import document_capabilities, read_canvas_file
 from canvas_py.endpoints.assignments import ListAssignments
+from canvas_py.endpoints.activity import GetActivityStreamSummary
 from canvas_py.endpoints.conversations import ListConversations
 from canvas_py.endpoints.courses import ListCourses
-from canvas_py.endpoints.files import ListUserFiles, ListUserFolders, ListFolderFiles, ListSubfolders, ListCourseFiles
+from canvas_py.endpoints.files import (ListUserFiles, ListUserFolders, ListFolderFiles, ListSubfolders,
+                                     ListCourseFiles, GetFolder, GetUserQuota)
 from canvas_py.endpoints.planner import ListPlannerItems, ListPlannerNotes
 from canvas_py.navigation import CourseSection, ItemType, AssetType
 from mcp.types import ToolAnnotations
 
 from .actions import ActionStore, ActionRequest, ACTION_KINDS, EXECUTE_ROUTES, PositiveId, Request
+from . import group_content, preferences
 from .responses import ResponseStore, dump, envelope, external_link, failure, window
 
 
-def _page(canvas: Canvas, request: Any, offset: int, limit: int) -> dict:
+def _page(canvas: Canvas, request: Any, offset: int, limit: int, *, transform: Callable | None = None) -> dict:
     window([], offset, limit)  # validate before network access
     iterator = canvas.paginate(request)
     try:
@@ -30,11 +33,23 @@ def _page(canvas: Canvas, request: Any, offset: int, limit: int) -> dict:
     finally:
         iterator.close()
     more = len(items) > limit
-    return envelope(items[:limit], origin=canvas.config.base_url,
+    selected = items[:limit]
+    if transform is not None:
+        selected = [transform(item) for item in selected]
+    return envelope(selected, origin=canvas.config.base_url,
                     coverage={"scope": "requested_list", "complete": not more and offset == 0,
                               "offset": offset, "returned": min(len(items), limit),
                               "next_offset": offset + limit if more else None,
                               "pagination_note": "Offset windows may shift if Canvas changes between reads."})
+
+
+def _file_metadata(canvas: Canvas, item: Any) -> dict:
+    data = dump(item)
+    data.pop("url", None)  # Download credentials can be in opaque paths, not only query parameters.
+    if type(data.get("id")) is int and data["id"] > 0:
+        data["html_url"] = f"{canvas.config.base_url}/files/{data['id']}"
+        data["read"] = {"tool": "canvas_read_file", "file_id": data["id"]}
+    return data
 
 
 def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Callable[[], None],
@@ -76,7 +91,8 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
     def canvas_capabilities() -> dict[str, Any]:
         """Describe supported actions, limits, and external-service handoffs. Does not verify Canvas auth."""
         return envelope({"reads": ["courses", "home", "modules", "assignments", "grades", "syllabus", "pages", "files", "documents",
-            "quizzes_metadata", "discussions", "announcements", "submission_feedback", "inbox", "planner", "calendar", "people", "groups"],
+            "quizzes_metadata", "discussions", "announcements", "submission_feedback", "inbox", "planner", "calendar", "people", "groups",
+            "group_content", "file_quota", "notification_preferences", "favorites", "course_nicknames", "course_colors"],
             "actions": ACTION_KINDS, "write_workflow": "Prepare exact payload; obtain user authorization; call the returned execute route with action_id.",
             "permission_groups": sorted(set(EXECUTE_ROUTES.values())),
             "client_approvals": "Client controls always allow/ask/deny. Server write scopes and Canvas permissions are also enforced.",
@@ -215,28 +231,48 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
         return _page(provider(), Request("users/self/activity_stream", query=[("per_page", limit)]), offset, limit)
 
     @tool()
+    def canvas_activity_summary() -> dict[str, Any]:
+        """Read Canvas activity counts by type, including unread counts. This does not change read status or notification delivery settings."""
+        canvas = provider()
+        return envelope(canvas.send(GetActivityStreamSummary()), origin=canvas.config.base_url)
+
+    @tool()
     def canvas_browse_files(kind: Literal["files", "folders"] = "files", folder_id: PositiveId | None = None,
                             course_id: PositiveId | None = None, search_term: str | None = None,
-                            offset: int = 0, limit: int = 30) -> dict[str, Any]:
+                            offset: int = 0, limit: int = 30, content_types: list[str] | None = None) -> dict[str, Any]:
         """Browse personal/course files or folders. A forbidden file listing does not block files linked through modules or assignments."""
         if folder_id is not None and course_id is not None:
             raise ValueError("Choose folder_id or course_id")
+        if content_types is not None and (len(content_types) > 20 or any(
+                not value.strip() or len(value) > 200 or any(ord(c) < 32 for c in value) for value in content_types)):
+            raise ValueError("Use at most 20 nonempty Canvas content-type filters, each at most 200 characters")
         if kind == "folders":
-            if search_term:
-                raise ValueError("Search is supported for files; browse folders instead")
+            if search_term or content_types:
+                raise ValueError("Search and content types are supported for files; browse folders instead")
             req = Request(f"courses/{course_id}/folders") if course_id else (ListSubfolders(folder_id) if folder_id else ListUserFolders())
         else:
-            req = ListCourseFiles(course_id, search_term=search_term) if course_id else (ListFolderFiles(folder_id, search_term=search_term) if folder_id else ListUserFiles(search_term=search_term))
-        return _page(provider(), req, offset, limit)
+            req = ListCourseFiles(course_id, search_term=search_term, content_types=content_types) if course_id else (ListFolderFiles(folder_id, search_term=search_term, content_types=content_types) if folder_id else ListUserFiles(search_term=search_term, content_types=content_types))
+        canvas = provider()
+        return _page(canvas, req, offset, limit,
+                     transform=(lambda item: _file_metadata(canvas, item)) if kind == "files" else None)
+
+    @tool()
+    def canvas_get_folder(folder_id: PositiveId) -> dict[str, Any]:
+        """Read a permitted folder's name, context, parent, counts, and access flags. Personal-file actions separately verify ownership and write eligibility."""
+        canvas = provider()
+        return envelope(canvas.send(GetFolder(folder_id)), origin=canvas.config.base_url)
+
+    @tool()
+    def canvas_file_quota() -> dict[str, Any]:
+        """Read your personal Canvas file quota and used bytes. Course/group storage quotas are separate."""
+        canvas = provider()
+        return envelope(canvas.send(GetUserQuota()), origin=canvas.config.base_url)
 
     @tool()
     def canvas_get_file(file_id: PositiveId) -> dict[str, Any]:
         """Read file metadata and access state; use canvas_read_file for content. Download credentials are never exposed."""
         canvas = provider()
-        data = dump(canvas.files.get(file_id))
-        data.pop("url", None)
-        data["html_url"] = f"{canvas.config.base_url}/files/{file_id}"
-        data["read"] = {"tool": "canvas_read_file", "file_id": file_id}
+        data = _file_metadata(canvas, canvas.files.get(file_id))
         return envelope(data, origin=canvas.config.base_url)
 
     @tool()
@@ -281,6 +317,77 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
         path = f"courses/{course_id}/groups" if course_id else "users/self/groups"
         query = [("only_own_groups", True), ("per_page", limit)]
         return _page(provider(), Request(path, query=query), offset, limit)
+
+    @tool()
+    def canvas_group_home(group_id: PositiveId) -> dict[str, Any]:
+        """Read a group and confirm your accepted membership before browsing its content."""
+        canvas = provider()
+        return envelope(group_content.get_group(canvas, group_id), origin=canvas.config.base_url)
+
+    @tool()
+    def canvas_browse_group(group_id: PositiveId, section: Literal["members", "pages", "discussions", "files", "folders"],
+                            offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        """Browse your group's members, pages, discussions, files or flat folder list with bounded pagination."""
+        handlers = {"members": group_content.list_group_members, "pages": group_content.list_group_pages,
+                    "discussions": group_content.list_group_discussions, "files": group_content.list_group_files,
+                    "folders": group_content.list_group_folders}
+        if section not in handlers:
+            raise ValueError("Choose members, pages, discussions, files or folders")
+        return handlers[section](provider(), group_id, offset, limit)
+
+    @tool()
+    def canvas_open_group_item(group_id: PositiveId, item_type: Literal["page", "discussion", "file", "folder"],
+                               item_id: str, include_html: bool = False) -> dict[str, Any]:
+        """Read an item within your group. Use a page URL slug for pages and a numeric ID otherwise; file content uses canvas_read_file."""
+        canvas = provider()
+        if item_type == "page":
+            data = group_content.get_group_page(canvas, group_id, item_id)
+        else:
+            if not item_id.isascii() or not item_id.isdecimal() or int(item_id) < 1:
+                raise ValueError("Use a positive numeric item ID")
+            item = int(item_id)
+            if item_type == "discussion":
+                data = group_content.get_topic(canvas, {"context_type": "group", "group_id": group_id}, item)
+            elif item_type == "file":
+                data = group_content.get_group_file(canvas, group_id, item)
+                data.pop("url", None)
+                data["read"] = {"tool": "canvas_read_file", "file_id": item}
+            elif item_type == "folder":
+                data = group_content.get_group_folder(canvas, group_id, item)
+            else:
+                raise ValueError("Choose page, discussion, file or folder")
+        status = "locked" if data.get("locked_for_user") or data.get("published") is False else "ok"
+        return envelope(data, origin=canvas.config.base_url, status=status, include_html=include_html)
+
+    @tool()
+    def canvas_group_discussion_entries(group_id: PositiveId, topic_id: PositiveId, entry_id: PositiveId | None = None,
+                                         offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        """Read group discussion entries or replies without posting or marking them read. Initial-post gates remain restricted."""
+        return group_content.list_entries(provider(), {"context_type": "group", "group_id": group_id},
+                                          topic_id, entry_id, offset, limit)
+
+    @tool()
+    def canvas_communication_channels(offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        """List your existing Canvas notification channels and IDs. Does not create or remove a channel."""
+        return preferences.communication_channels(provider(), offset, limit)
+
+    @tool()
+    def canvas_notification_preferences(channel_id: PositiveId, offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        """Read notification names and delivery frequencies for one of your existing channels."""
+        return preferences.notification_preferences(provider(), channel_id, offset, limit)
+
+    @tool()
+    def canvas_preferences(section: Literal["favorite_courses", "favorite_groups", "nicknames", "colors"],
+                             offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        """Read your favorite courses/groups, personal course nicknames, or course colors; lists are bounded."""
+        canvas = provider()
+        if section in {"favorite_courses", "favorite_groups"}:
+            return preferences.favorites(canvas, "courses" if section == "favorite_courses" else "groups", offset, limit)
+        if section == "nicknames":
+            return preferences.course_nicknames(canvas, offset, limit)
+        if section == "colors":
+            return preferences.course_colors(canvas, offset, limit)
+        raise ValueError("Choose favorite_courses, favorite_groups, nicknames or colors")
 
     @tool()
     def canvas_course_summary(course_id: PositiveId, lookback_days: int = 14, lookahead_days: int = 7) -> dict[str, Any]:
@@ -361,6 +468,26 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
     def canvas_update_module_progress(action_id: str) -> dict[str, Any]:
         """Apply a prepared module mark-done/undo or mark-viewed action after authorization. Only the matching student completion requirement is supported; it never submits coursework or changes grades."""
         return execute_as(action_id, "canvas_update_module_progress")
+
+    @tool(write=True, destructive=True)
+    def canvas_manage_personal_files(action_id: str) -> dict[str, Any]:
+        """Apply a prepared personal file/folder create, rename, move or delete after authorization. Folder deletion requires an empty folder; protected/submission folders are excluded."""
+        return execute_as(action_id, "canvas_manage_personal_files")
+
+    @tool(write=True, destructive=True)
+    def canvas_update_notifications(action_id: str) -> dict[str, Any]:
+        """Apply the exact prepared notification frequency to one existing channel after authorization. Never means stop delivery of that notification on this channel."""
+        return execute_as(action_id, "canvas_update_notifications")
+
+    @tool(write=True, destructive=True)
+    def canvas_update_preferences(action_id: str) -> dict[str, Any]:
+        """Apply the prepared favorite, course nickname or course color change after authorization."""
+        return execute_as(action_id, "canvas_update_preferences")
+
+    @tool(write=True, destructive=True)
+    def canvas_create_discussion(action_id: str) -> dict[str, Any]:
+        """Publish the exact prepared course or group discussion topic after authorization for its audience, title and message. Canvas must permit student topic creation."""
+        return execute_as(action_id, "canvas_create_discussion")
 
     @tool(write=True, destructive=True)
     def canvas_send_message(action_id: str) -> dict[str, Any]:

@@ -27,7 +27,7 @@ from canvas_py.endpoints.file_uploads import UploadContext
 from canvas_py.endpoints.submissions import SubmitFileUpload
 
 from .responses import dump
-from . import module_progress, student_actions
+from . import module_progress, student_actions, personal_files, preferences, group_content
 
 PositiveId = Annotated[int, Field(gt=0, strict=True)]
 Text = Annotated[str, Field(min_length=1, max_length=100_000)]
@@ -147,6 +147,7 @@ class Upload(ActionModel):
     destination: Literal["user", "assignment", "submission_comment"] = "user"
     course_id: PositiveId | None = None
     assignment_id: PositiveId | None = None
+    parent_folder_id: PositiveId | None = None
 
     @field_validator("filename")
     @classmethod
@@ -161,6 +162,8 @@ class Upload(ActionModel):
             raise ValueError("Assignment/comment upload requires course_id and assignment_id")
         if self.destination == "user" and (self.course_id is not None or self.assignment_id is not None):
             raise ValueError("Personal uploads cannot have an assignment target")
+        if self.parent_folder_id is not None and self.destination != "user":
+            raise ValueError("A parent folder is supported only for personal uploads")
         raw = base64.b64decode(self.content_base64, validate=True)
         if not raw or len(raw) > 8 * 1024 * 1024:
             raise ValueError("Upload must contain 1 byte to 8 MiB")
@@ -170,18 +173,22 @@ class Upload(ActionModel):
 ActionRequest = Annotated[Union[SubmitText, SubmitURL, SubmitFiles, SubmissionComment,
     DiscussionPost, DiscussionReply, InboxSend, InboxReply, InboxUpdate,
     PlannerCreate, PlannerUpdate, PlannerDelete, PlannerOverride, Upload,
-    student_actions.StudentActionTypes, module_progress.ModuleProgressActionTypes], Field(discriminator="kind")]
+    student_actions.StudentActionTypes, module_progress.ModuleProgressActionTypes,
+    personal_files.PersonalFileActionTypes, preferences.PreferenceActionTypes,
+    group_content.GroupContentActionTypes], Field(discriminator="kind")]
 ACTION_ADAPTER = TypeAdapter(ActionRequest)
 ACTION_KINDS = ["upload", "submit_files", "submit_text", "submit_url", "submission_comment",
                 "discussion_post", "discussion_reply", "inbox_send", "inbox_reply", "inbox_update",
-                "planner_create", "planner_update", "planner_delete", "planner_override", *student_actions.KINDS, *module_progress.KINDS]
+                "planner_create", "planner_update", "planner_delete", "planner_override", *student_actions.KINDS, *module_progress.KINDS,
+                *personal_files.KINDS, *preferences.KINDS, *group_content.KINDS]
 EXECUTE_ROUTES = {"upload": "canvas_upload_file", "submission_comment": "canvas_add_submission_comment",
     **{kind: "canvas_submit_assignment" for kind in ("submit_files", "submit_text", "submit_url")},
     **{kind: "canvas_post_discussion" for kind in ("discussion_post", "discussion_reply")},
     **{kind: "canvas_send_message" for kind in ("inbox_send", "inbox_reply")},
     "inbox_update": "canvas_update_inbox",
     **{kind: "canvas_update_planner" for kind in ("planner_create", "planner_update", "planner_delete", "planner_override")},
-    **student_actions.ROUTES, **module_progress.ROUTES}
+    **student_actions.ROUTES, **module_progress.ROUTES, **personal_files.ROUTES,
+    **preferences.ROUTES, **group_content.ROUTES}
 
 
 class Request(CanvasRequest[Any]):
@@ -396,6 +403,11 @@ class ActionStore:
 
     def _snapshot(self, canvas: Canvas, owner: str, p: dict) -> dict:
         kind = p["kind"]
+        for module in (personal_files, preferences, group_content):
+            if kind in module.KINDS:
+                return module.snapshot(canvas, p)
+        if kind == "upload" and p.get("parent_folder_id") is not None:
+            return personal_files.validated_personal_folder(canvas, p["parent_folder_id"])
         if kind in module_progress.KINDS:
             return module_progress.snapshot(canvas, p)
         if kind in student_actions.KINDS:
@@ -502,6 +514,9 @@ class ActionStore:
         # comment or invalidate an already-prepared text-only snapshot.
         if p["kind"] == "submission_comment" and not p.get("upload_action_ids"):
             p.pop("upload_action_ids", None)
+        # Preserve fingerprints of uploads prepared before folder targeting existed.
+        if p["kind"] == "upload" and p.get("parent_folder_id") is None:
+            p.pop("parent_folder_id", None)
         encoded = json.dumps(p, sort_keys=True, separators=(",", ":"))
         identity = self._identity(canvas, owner)
         fingerprint = hashlib.sha256((identity + "\0" + encoded).encode()).hexdigest()
@@ -682,6 +697,9 @@ class ActionStore:
 
     def _perform(self, canvas: Canvas, p: dict, target: dict) -> dict:
         kind = p["kind"]
+        for module in (personal_files, preferences, group_content):
+            if kind in module.KINDS:
+                return module.perform(canvas, p, target)
         if kind in module_progress.KINDS:
             return module_progress.perform(canvas, p, target)
         if kind in student_actions.KINDS:
@@ -697,12 +715,20 @@ class ActionStore:
             with tempfile.TemporaryDirectory(prefix="canvas-upload-") as directory:
                 path = Path(directory) / p["filename"]
                 path.write_bytes(raw)
-                uploaded = dump(canvas.files.upload(path, context=context, name=p["filename"], on_duplicate="rename",
+                options = {"parent_folder_id": p["parent_folder_id"]} if p.get("parent_folder_id") is not None else {}
+                uploaded = dump(canvas.files.upload(path, context=context, name=p["filename"], on_duplicate="rename", **options,
                            expected_size=len(raw), expected_sha256=hashlib.sha256(raw).hexdigest(), verify=True))
             if not uploaded.get("id"):
                 raise ValueError("Canvas did not return a file identity")
             self._verify_files(canvas, [{"id": uploaded["id"], "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}])
+            if p.get("parent_folder_id") is not None:
+                fresh = dump(canvas.files.get(uploaded["id"]))
+                if (uploaded.get("folder_id") != p["parent_folder_id"] or
+                        fresh.get("id") != uploaded["id"] or fresh.get("folder_id") != p["parent_folder_id"]):
+                    raise ValueError("Upload destination folder was not confirmed")
             result = {"id": uploaded["id"], "filename": uploaded.get("display_name"), "size": len(raw), "verified": True, "submitted": False}
+            if p.get("parent_folder_id") is not None:
+                result["folder_id"] = p["parent_folder_id"]
             if p["destination"] == "submission_comment":
                 result["comment_sent"] = False
             return result
