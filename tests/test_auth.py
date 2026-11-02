@@ -23,7 +23,7 @@ CHALLENGE = base64.urlsafe_b64encode(hashlib.sha256(VERIFIER.encode()).digest())
 
 
 @pytest.fixture
-def setup(tmp_path):
+def setup(tmp_path, request):
     calls = []
     def upstream(req):
         calls.append(req)
@@ -38,7 +38,7 @@ def setup(tmp_path):
             return httpx.Response(200, json={"id": 11})
         raise AssertionError(req.url)
     key = Fernet.generate_key().decode()
-    provider = CanvasOAuthProvider(issuer_url=BASE, database_path=tmp_path / "auth.db", encryption_key=key,
+    provider = CanvasOAuthProvider(issuer_url=getattr(request, "param", BASE), database_path=tmp_path / "auth.db", encryption_key=key,
         institutions=[Institution("https://school.example", "canvas-client", "institution-private-secret", "School")],
         http_client_factory=lambda: httpx.Client(transport=httpx.MockTransport(upstream)))
     settings = provider.auth_settings
@@ -84,7 +84,7 @@ def login(client, client_id, *, write=True):
     assert callback.status_code == 303, callback.text
     params = parse_qs(urlsplit(callback.headers["location"]).query)
     assert params["state"] == ["client-state"]
-    assert params["iss"] == [BASE]
+    assert params["iss"] == [client.get("/.well-known/oauth-authorization-server").json()["issuer"]]
     return params["code"][0], upstream_state
 
 
@@ -122,6 +122,52 @@ def test_oauth_end_to_end_pkce_rotation_revocation_and_encryption(setup):
     assert revoke.status_code == 200, revoke.text
     assert asyncio.run(provider.load_access_token(rotated["access_token"])) is None
     assert client.post("/token", data={"client_id": client_id, "grant_type": "refresh_token", "refresh_token": rotated["refresh_token"]}).status_code == 400
+
+
+@pytest.mark.parametrize("setup", [BASE, BASE + "/"], indirect=True)
+@pytest.mark.parametrize("outcome", ["success", "consent_denied", "canvas_denied", "missing_code"])
+def test_authorization_response_issuer_exactly_matches_discovery(setup, outcome):
+    client, provider, calls, *_ = setup
+    metadata_response = client.get("/.well-known/oauth-authorization-server")
+    assert metadata_response.status_code == 200
+    metadata = metadata_response.json()
+    # The SDK serializes an origin-only AnyHttpUrl with a trailing slash.
+    # RFC 9207 requires exact string equality, not equivalent URL origins.
+    assert metadata["issuer"] == BASE + "/"
+    assert metadata["authorization_endpoint"] == BASE + "/authorize"
+    assert provider.issuer_url == BASE
+    assert provider.resource_url == BASE + "/mcp"
+    assert provider.callback_url == BASE + "/canvas/callback"
+    client_id = register(client)
+    fields, _ = begin(client, client_id)
+    if outcome == "consent_denied":
+        fields["deny"] = "yes"
+    consent = client.post("/connect", data=fields, headers={"Origin": BASE}, follow_redirects=False)
+    assert consent.status_code == 303
+    if outcome == "consent_denied":
+        response = consent
+    else:
+        upstream = parse_qs(urlsplit(consent.headers["location"]).query)
+        assert upstream["redirect_uri"] == [BASE + "/canvas/callback"]
+        callback = {"state": upstream["state"][0]}
+        if outcome == "success":
+            callback["code"] = "canvas-code"
+        elif outcome == "canvas_denied":
+            callback["error"] = "access_denied"
+        response = client.get("/canvas/callback", params=callback, follow_redirects=False)
+    assert response.status_code == 303
+    redirect = urlsplit(response.headers["location"])
+    assert redirect._replace(query="").geturl() == REDIRECT
+    result = parse_qs(redirect.query)
+    assert result["iss"] == [metadata["issuer"]]
+    assert result["state"] == ["client-state"]
+    if outcome == "success":
+        assert "error" not in result
+        assert exchange(client, client_id, result["code"][0]).status_code == 200
+    else:
+        assert result["error"] == ["access_denied"]
+        assert "code" not in result
+        assert not calls
 
 
 def test_scopes_cannot_be_escalated_and_tenants_are_isolated(setup):

@@ -94,8 +94,8 @@ url:POST|/api/v1/planner/overrides
 url:PUT|/api/v1/planner/overrides/:id
 url:GET|/api/v1/planner/overrides/:id
 url:GET|/api/v1/courses/:course_id/discussion_topics/:topic_id/view
-url:PUT|/api/v1/courses/:course_id/discussion_topics/:topic_id/entries/:entry_id
-url:DELETE|/api/v1/courses/:course_id/discussion_topics/:topic_id/entries/:entry_id
+url:PUT|/api/v1/courses/:course_id/discussion_topics/:topic_id/entries/:id
+url:DELETE|/api/v1/courses/:course_id/discussion_topics/:topic_id/entries/:id
 url:PUT|/api/v1/courses/:course_id/discussion_topics/:topic_id/subscribed
 url:DELETE|/api/v1/courses/:course_id/discussion_topics/:topic_id/subscribed
 url:PUT|/api/v1/courses/:course_id/discussion_topics/:topic_id/read

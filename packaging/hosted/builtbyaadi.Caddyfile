@@ -1,0 +1,5 @@
+# Prepared reference only; do not start until DNS, host and credentials are ready.
+# Direct public DNS to this host. A CDN/proxy in front needs a separate trust review.
+canvas.builtbyaadi.com {
+    reverse_proxy 127.0.0.1:8000
+}

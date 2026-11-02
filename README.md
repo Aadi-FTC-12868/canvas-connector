@@ -2,7 +2,8 @@
 
 A free, MIT-licensed Canvas connector for AI assistants. Navigate courses, read
 assignments and documents, inspect feedback and grades, and prepare student
-actions through the Model Context Protocol (MCP).
+actions through the Model Context Protocol (MCP). This independent project is
+not affiliated with or endorsed by Instructure or Canvas.
 
 **Status: development release.** Local stdio and a hosted OAuth reference server
 are included. No public service or app-directory listing is claimed. See

@@ -121,6 +121,13 @@ class CanvasOAuthProvider:
                 valid_scopes=SCOPES, default_scopes=SCOPES),
             revocation_options=RevocationOptions(enabled=True))
 
+    @property
+    def authorization_issuer(self) -> str:
+        # RFC 9207 sections 2.3-2.4 require an exact match to discovery metadata.
+        # Use the SDK's serialized URL (including its trailing slash), while
+        # keeping issuer_url as the origin used by CSRF and endpoint builders.
+        return str(self.auth_settings.issuer_url)
+
     def routes(self) -> list[Route]:
         return create_protected_resource_routes(
             self.auth_settings.resource_server_url, [self.auth_settings.issuer_url],
@@ -237,7 +244,7 @@ class CanvasOAuthProvider:
             return JSONResponse({"error": "request_already_used"}, status_code=400, headers=_headers())
         params = pending["params"]
         if form.get("deny") == "yes":
-            return RedirectResponse(_redirect(params["redirect_uri"], {"error": "access_denied", "state": params.get("state"), "iss": self.issuer_url}), status_code=303, headers=_headers())
+            return RedirectResponse(_redirect(params["redirect_uri"], {"error": "access_denied", "state": params.get("state"), "iss": self.authorization_issuer}), status_code=303, headers=_headers())
         scopes = ["canvas:read"]
         if form.get("write") == "yes" and "canvas:write" in (params.get("scopes") or []):
             scopes.append("canvas:write")
@@ -303,7 +310,7 @@ class CanvasOAuthProvider:
         params = pending["params"]
         institution = self.institutions[pending["institution"]]
         if request.query_params.get("error") or not request.query_params.get("code"):
-            return RedirectResponse(_redirect(params["redirect_uri"], {"error": "access_denied", "state": params.get("state"), "iss": self.issuer_url}), status_code=303, headers=_headers())
+            return RedirectResponse(_redirect(params["redirect_uri"], {"error": "access_denied", "state": params.get("state"), "iss": self.authorization_issuer}), status_code=303, headers=_headers())
         try:
             credential = await anyio.to_thread.run_sync(lambda: self._canvas_token(institution, {
                 "grant_type": "authorization_code", "code": request.query_params["code"], "redirect_uri": self.callback_url}))
@@ -311,7 +318,7 @@ class CanvasOAuthProvider:
         except Exception:
             return HTMLResponse("Canvas sign-in could not be verified. Start again or contact your institution’s administrator.", status_code=502, headers=_headers())
         code = await anyio.to_thread.run_sync(self._create_grant, pending, institution, credential, profile)
-        response = RedirectResponse(_redirect(params["redirect_uri"], {"code": code, "state": params.get("state"), "iss": self.issuer_url}), status_code=303, headers=_headers())
+        response = RedirectResponse(_redirect(params["redirect_uri"], {"code": code, "state": params.get("state"), "iss": self.authorization_issuer}), status_code=303, headers=_headers())
         response.delete_cookie(self.cookie_name, path="/", secure=self.secure_cookie, httponly=True, samesite="lax")
         return response
 

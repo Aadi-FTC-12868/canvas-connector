@@ -22,7 +22,10 @@ canvas-connector stdio
 
 Reads are the default. `canvas-connector stdio --allow-writes` enables prepared actions for your personal account; the assistant must still act within your authorization. Configure the MCP client to launch the executable in the installed environment, with the private configuration path in its environment. See [COMPATIBILITY.md](COMPATIBILITY.md) for client choices.
 
-Manual Canvas tokens are for personal testing. They are not the hosted onboarding flow: Canvas explicitly requires multi-user applications to obtain user tokens through OAuth, and prohibits asking other users to generate and paste tokens into an application. [Canvas OAuth overview](https://developerdocs.instructure.com/services/canvas/oauth2/file.oauth)
+Manual Canvas tokens are for personal local use. They are not the hosted onboarding flow: Canvas explicitly requires multi-user applications to obtain user tokens through OAuth, and prohibits asking other users to generate and paste tokens into an application. [Canvas OAuth overview](https://developerdocs.instructure.com/services/canvas/oauth2/file.oauth)
+
+For the prepared Built by Aadi origin and pending-deployment reference files, see
+[canvas.builtbyaadi.com deployment plan](HOSTED-BUILTBYAADI.md).
 
 ## Hosted prerequisites
 

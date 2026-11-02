@@ -1,0 +1,27 @@
+[Unit]
+Description=Independent Canvas Connector MCP service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=canvas-connector
+Group=canvas-connector
+WorkingDirectory=/opt/canvas-connector
+EnvironmentFile=/etc/canvas-connector/operator.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/canvas-connector/.venv/bin/canvas-connector serve --host 127.0.0.1 --port 8000 --workers 2
+StateDirectory=canvas-connector
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/canvas-connector
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
