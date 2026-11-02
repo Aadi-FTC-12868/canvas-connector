@@ -429,8 +429,16 @@ def test_canvas_refresh_is_serialized_and_revocation_during_refresh_is_final(set
     assert asyncio.run(provider.load_access_token(token)) is None
 
 
-def test_hosted_auth_rate_and_body_limits(setup):
+def test_hosted_auth_rate_and_body_limits(setup, monkeypatch):
+    from types import SimpleNamespace
+
+    from canvas_connector import storage
     from canvas_connector.server import create_http_app
+
+    # Control only the durable limiter's clock. Replacing time.time globally
+    # would also affect unrelated libraries; monotonic/event-loop time stays real.
+    limiter_time = [time.time()]
+    monkeypatch.setattr(storage, "time", SimpleNamespace(time=lambda: limiter_time[0]))
     _, provider, *_ = setup
     with TestClient(create_http_app(provider), base_url=BASE) as client:
         oversized = client.post("/register", content=b"x" * 65537, headers={"Content-Type": "application/json"})
@@ -441,3 +449,13 @@ def test_hosted_auth_rate_and_body_limits(setup):
         limited = client.get("/health")
         assert limited.status_code == 429
         assert limited.headers["Retry-After"] == "60"
+        limiter_time[0] += 1.25
+        limited = client.get("/health")
+        assert limited.status_code == 429
+        assert limited.headers["Retry-After"] == "59"
+        limiter_time[0] += 58.5
+        limited = client.get("/health")
+        assert limited.status_code == 429
+        assert limited.headers["Retry-After"] == "1"
+        limiter_time[0] += 0.25
+        assert client.get("/health").status_code == 200

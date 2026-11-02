@@ -7,7 +7,8 @@ These checks do not establish complete Canvas app parity or a production service
 ## Completed
 
 - Python 3.12 local check for 0.6.0: **1,373 tests passed; 13 PostgreSQL
-  tests skipped** without a local PostgreSQL instance. This includes folder-upload, group and preference MCP boundary cases. Version 0.5.0 Linux CI passed
+  tests skipped** without a local PostgreSQL instance. This includes folder-upload,
+  group and preference MCP boundary cases. Version 0.5.0 Linux CI passed
   775 tests, including all 13 PostgreSQL cases, with two native OCR cases skipped;
   both OCR tests passed locally. Two upstream warnings remain: Starlette's
   test-client httpx deprecation and MCP/Pydantic's settings forward reference.
@@ -61,6 +62,10 @@ These checks do not establish complete Canvas app parity or a production service
   copies successfully with 42 tools, 27 actions, and 11 permission groups.
   Clean extracted packages also bootstrapped
   their bundled Python packages and ran a real MCP session.
+- A clean extracted 0.6.0 MCPB installed its bundled packages through UV and
+  launched a real stdio session with all 56 tools, 43 actions and 15 execution
+  groups, using synthetic credentials and isolated temporary storage. This
+  validates the packaged runtime, separately from native client installation.
 - Source releases use an allowlist, SHA-256 manifests, safe archive paths, and a
   private-path/school-marker scan. A known private-token scan found zero matches
   without printing or copying that token. Clean source extraction installed,
