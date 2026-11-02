@@ -1,0 +1,19 @@
+services:
+  connector:
+    build: .
+    restart: unless-stopped
+    ports: ["127.0.0.1:8000:8000"]
+    environment:
+      CONNECTOR_PUBLIC_URL: ${CONNECTOR_PUBLIC_URL:?Set the public HTTPS origin}
+      CONNECTOR_ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY:?Set a persistent encryption key}
+      CONNECTOR_DATABASE: /data/connector.sqlite3
+      CONNECTOR_INSTITUTIONS_FILE: /run/secrets/institutions.json
+    volumes:
+      - connector-data:/data
+      - ${CONNECTOR_INSTITUTIONS_FILE:?Set the institution credentials file}:/run/secrets/institutions.json:ro
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+volumes:
+  connector-data:

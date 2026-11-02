@@ -1,0 +1,21 @@
+name: Connector checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.lock -e ./packages/canvas-py -e ./packages/canvas-mcp-v2 -e '.[dev]'
+      - run: python -m pytest -q
+      - run: python scripts/check_protocol.py
+      - run: python scripts/release_check.py --build
+      - run: python -m pip check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canvas-connector-source
+          path: dist/*-source.zip

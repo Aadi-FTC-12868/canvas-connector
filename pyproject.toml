@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "canvas-connector"
+version = "0.3.0"
+description = "An open-source Canvas connector for MCP assistants"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{name = "Aadi Chandraya"}]
+dependencies = [
+  "canvas-py==0.2.0", "canvas-mcp-v2==0.2.0", "mcp==1.27.0",
+  "cryptography>=44,<47", "uvicorn>=0.35,<1", "python-multipart>=0.0.20,<1",
+  "httpx>=0.28,<0.29", "httpcore>=1,<2"
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.23,<2", "respx>=0.21,<1", "build>=1,<2", "ruff>=0.5"]
+
+[project.scripts]
+canvas-connector = "canvas_connector.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+canvas_connector = ["web/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "packages/canvas-py/tests", "packages/canvas-mcp-v2/tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

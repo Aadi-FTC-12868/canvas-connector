@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Connect your Canvas courses to your AI assistant. Free, open-source, and built around your school account.">
+  <title>Canvas Connector — Built by Aadi</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='12' fill='%238b2942'/%3E%3Ctext x='12' y='35' fill='white' font-family='Arial' font-size='32'%3EC%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a class="brand" href="https://builtbyaadi.com">built by aadi</a><a href="#connect">Connect your assistant</a></header>
+  <main id="main">
+    <section class="hero">
+      <div class="intro"><p class="project">Canvas Connector</p><h1>Your classes.<br>Your assistant.<br>Connected.</h1><p class="lead">Bring assignments, course materials, and feedback into the AI you already use.</p><a class="primary" href="#connect">Choose your assistant</a><p class="note">Free and open source. Personal setup available.<br>Shared hosting requires your school’s Canvas authorization.</p></div>
+      <div class="course-demo" aria-label="Illustrative course conversation, not real student data">
+        <div class="demo-top"><span class="connector-mark" aria-hidden="true">C<span>↔</span></span><span>Canvas meets your assistant</span></div>
+        <div class="question">What do I need for tomorrow’s biology class?</div>
+        <div class="answer"><span class="tiny-mark" aria-hidden="true">C</span><div><p>Here’s what’s in your course.</p><div class="assignment"><span>Assignment</span><strong>Cell transport lab</strong><p>Instructions, worksheet, and teacher feedback in one place.</p><div class="file">▤ <span>Lab worksheet.pdf</span><span>PDF</span></div></div><p class="demo-foot">“Want to walk through the instructions?”</p></div></div>
+        <p class="sample-label">Example conversation</p>
+      </div>
+    </section>
+    <section class="uses" aria-label="What you can do"><div><h2>Find the actual material.</h2><p>Follow course pages, modules, assignments, and linked files. A syllabus can be a page, a document, or a link.</p></div><div><h2>Keep the context.</h2><p>Read feedback, check grades, and follow discussions with clear source and access information.</p></div><div><h2>Stay in control.</h2><p>Start with reading. Enable actions when you need them, and review the destination and content before sending.</p></div></section>
+    <section id="connect" class="connect">
+      <div class="section-intro"><p class="project">Get connected</p><h2>Pick where<br>you work.</h2><p>One connector. A setup that fits your assistant.</p></div>
+      <div class="setup">
+        <div class="tabs" role="tablist" aria-label="Assistant"><button role="tab" id="tab-chatgpt" aria-controls="guide" aria-selected="true" data-client="chatgpt">ChatGPT</button><button role="tab" id="tab-claude" aria-controls="guide" aria-selected="false" tabindex="-1" data-client="claude">Claude</button><button role="tab" id="tab-codex" aria-controls="guide" aria-selected="false" tabindex="-1" data-client="codex">Codex</button><button role="tab" id="tab-code" aria-controls="guide" aria-selected="false" tabindex="-1" data-client="code">Claude Code</button></div>
+        <div id="guide" role="tabpanel" aria-labelledby="tab-chatgpt" tabindex="0">
+          <h3 id="guide-title">Connect in ChatGPT</h3><p id="guide-description">Use your hosted connector address in ChatGPT’s custom MCP setup. Availability depends on your plan and workspace settings.</p>
+          <label for="endpoint">Connector address</label><div class="input-row"><input id="endpoint" type="url" inputmode="url" placeholder="https://your-connector.example/mcp" autocomplete="off" spellcheck="false"><button id="copy" type="button">Copy</button></div><p id="endpoint-note" class="field-note">Use an address from your own deployment or a trusted operator. No public Built by Aadi server is live yet.</p>
+          <ol id="steps"><li>Open your assistant’s custom MCP setup.</li><li>Paste the connector address and select OAuth.</li><li>Choose your school and sign in through Canvas.</li></ol>
+          <a class="primary" id="client-link" href="https://developers.openai.com/api/docs/guides/custom-mcp-server" target="_blank" rel="noopener noreferrer">Open ChatGPT setup guide</a>
+          <p id="local-note" class="field-note"></p>
+          <p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+    </section>
+    <section class="details"><div><h2>Built to be yours.</h2><p>The source is MIT licensed. Run it on your computer for personal use, or host it for students with your institution’s approval.</p><a id="download-source" class="primary" hidden download>Download source</a><p>The connector supports the Canvas student API. Quizzes, proctoring, and some external learning tools still need their own interface.</p></div><div><details><summary>Can I use it without a hosted server?</summary><p>Yes. Codex, Claude Code, and compatible desktop clients can launch the connector locally. Install the source with Python 3.12, keep your personal Canvas URL and token in a private file, then register the <code>canvas-connector stdio</code> command. Cloud-based ChatGPT and Claude connectors need a reachable HTTPS server.</p></details><details><summary>What happens to my school account?</summary><p>For hosted connections, you sign in through your school’s Canvas. The server stores encrypted credentials to retrieve your course information. Choose a server operator you trust. A personal local connection keeps the connector on your computer.</p></details><details><summary>What about Google Docs and Microsoft files?</summary><p>Your assistant can use the relevant connected app. If the file is limited to your school, that app needs access through the right school account. The connector explains when access is missing.</p></details><details><summary>Why isn’t there a one-click install?</summary><p>Custom connectors use each assistant’s supported setup flow. A direct app-directory install link becomes available only after a listing is published. The steps above work with your own hosted endpoint.</p></details></div></section>
+  </main>
+  <footer><span>Canvas Connector / Built by Aadi</span><span>Independent, open-source software. Not affiliated with Instructure.</span></footer>
+  <script src="./app.js" defer></script>
+</body></html>
