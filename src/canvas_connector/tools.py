@@ -21,7 +21,7 @@ from canvas_py.navigation import CourseSection, ItemType, AssetType
 from mcp.types import ToolAnnotations
 
 from .actions import ActionStore, ActionRequest, ACTION_KINDS, EXECUTE_ROUTES, PositiveId, Request
-from . import group_content, preferences, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, feedback
+from . import group_content, preferences, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, feedback, appointments, self_profile, dashboard_cards
 from .responses import ResponseStore, dump, envelope, external_link, failure, window
 
 
@@ -93,7 +93,8 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
         return envelope({"reads": ["courses", "home", "modules", "assignments", "grades", "syllabus", "pages", "files", "documents",
             "quizzes_metadata", "discussions", "announcements", "submission_feedback", "inbox", "planner", "calendar", "people", "groups",
             "group_content", "file_quota", "notification_preferences", "favorites", "course_nicknames", "course_colors",
-            "course_invitations", "bookmarks", "what_if_grades", "mastery_path_options", "group_membership_options", "feedback_read_state"],
+            "course_invitations", "bookmarks", "what_if_grades", "mastery_path_options", "group_membership_options", "feedback_read_state", "appointment_groups", "appointments",
+            "self_profile", "user_settings", "dashboard_cards"],
             "actions": ACTION_KINDS, "write_workflow": "Prepare exact payload; obtain user authorization; call the returned execute route with action_id.",
             "permission_groups": sorted(set(EXECUTE_ROUTES.values())),
             "client_approvals": "Client controls always allow/ask/deny. Server write scopes and Canvas permissions are also enforced.",
@@ -430,6 +431,32 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
         return feedback.read_feedback_state(provider(), course_id, assignment_id, part)
 
     @tool()
+    def canvas_appointment_groups(course_id: PositiveId, offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        """Discover your reservable appointment groups for one course. Follow returned group and participant IDs; a list is not a reservation."""
+        return appointments.read_appointment_groups(provider(), course_id, offset, limit)
+
+    @tool()
+    def canvas_appointments(course_id: PositiveId, appointment_group_id: PositiveId,
+                            offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        """Read appointment slots, your verified participant and existing reservations. Preserve availability/coverage; booking and cancellation need separate prepared actions."""
+        return appointments.read_appointments(provider(), course_id, appointment_group_id, offset, limit)
+
+    @tool()
+    def canvas_profile() -> dict[str, Any]:
+        """Read your own profile and Canvas-reported edit permissions. Excludes private calendar-feed credentials and administrative identifiers."""
+        return self_profile.read_profile(provider())
+
+    @tool()
+    def canvas_user_settings() -> dict[str, Any]:
+        """Read your supported discussion and navigation display preferences. This does not change discussion read state or notification delivery."""
+        return self_profile.read_settings(provider())
+
+    @tool()
+    def canvas_dashboard_cards() -> dict[str, Any]:
+        """Read Canvas's native course-card collection and saved order. This set differs from all courses or favorites and does not establish the active dashboard view."""
+        return dashboard_cards.read_dashboard_cards(provider())
+
+    @tool()
     def canvas_course_summary(course_id: PositiveId, lookback_days: int = 14, lookahead_days: int = 7) -> dict[str, Any]:
         """Compose a current course catch-up with deadlines, feedback and announcements. Inspect its source coverage before conclusions."""
         if not 0 <= lookback_days <= 90 or not 0 <= lookahead_days <= 90:
@@ -506,7 +533,7 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
 
     @tool(write=True, destructive=True)
     def canvas_manage_calendar(action_id: str) -> dict[str, Any]:
-        """Create/edit/delete the prepared personal calendar event after authorization. Course, group, appointment, and recurring events require Canvas."""
+        """Create/edit/delete the prepared personal calendar event after authorization. Course, group and recurring events require Canvas; appointment reservations use canvas_manage_appointments."""
         return execute_as(action_id, "canvas_manage_calendar")
 
     @tool(write=True)
@@ -578,6 +605,26 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
     def canvas_update_feedback_read_state(action_id: str) -> dict[str, Any]:
         """Apply the authorized prepared feedback read/unread marker, or mark rubric/annotations read. This does not submit work or attest that feedback was understood."""
         return execute_as(action_id, "canvas_update_feedback_read_state")
+
+    @tool(write=True, destructive=True)
+    def canvas_manage_appointments(action_id: str) -> dict[str, Any]:
+        """Reserve, cancel or reschedule the exact prepared student appointment after authorization for its slot, time and participant. Group reservations affect that student group. Inspect uncertain receipts before any new intent."""
+        return execute_as(action_id, "canvas_manage_appointments")
+
+    @tool(write=True, destructive=True)
+    def canvas_update_profile(action_id: str) -> dict[str, Any]:
+        """Apply the three prepared self-profile names after authorization. Names affect Canvas identity across courses; institution edit permissions and exact readback are required."""
+        return execute_as(action_id, "canvas_update_profile")
+
+    @tool(write=True, destructive=True)
+    def canvas_update_user_settings(action_id: str) -> dict[str, Any]:
+        """Change one prepared supported personal setting after authorization. The manual-read preference changes future automatic discussion marking; it does not mark existing posts itself."""
+        return execute_as(action_id, "canvas_update_user_settings")
+
+    @tool(write=True, destructive=True)
+    def canvas_reorder_dashboard(action_id: str) -> dict[str, Any]:
+        """Apply the prepared complete saved order of Canvas's supported native course-card collection after authorization. Preserves unrelated positions; it does not change the selected dashboard view, membership or favorites."""
+        return execute_as(action_id, "canvas_reorder_dashboard")
 
     @tool(write=True, destructive=True)
     def canvas_send_message(action_id: str) -> dict[str, Any]:

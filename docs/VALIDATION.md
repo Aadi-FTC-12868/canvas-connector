@@ -1,6 +1,6 @@
 # Validation record
 
-Development release 0.8.1, validated November 2, 2026 UTC.
+Development release 0.9.0, validated November 2, 2026 UTC.
 Historical installation, container and benchmark evidence below is identified by release; those checks are not implied to have been repeated for every new capability.
 These checks do not establish complete Canvas app parity or a production service.
 
@@ -14,17 +14,41 @@ These checks do not establish complete Canvas app parity or a production service
   discovery metadata, with or without a trailing slash in operator configuration.
   Endpoint construction and CSRF origin checks remain separately verified.
 
-- Python 3.12 local check for 0.8.1: **2,511 tests passed; 13 PostgreSQL
+- Python 3.12 local check for 0.9.0: **2,897 tests passed; 13 PostgreSQL
   tests skipped** without a local PostgreSQL instance. New coverage includes
-  Mastery Paths, self group membership, discussion attachment bytes, feedback
-  markers, passive page reads and Horizon read safety. Version 0.8.0 Linux CI passed 2,394 tests,
+  appointments, self-profile/settings changes, native dashboard ordering,
+  native Inbox send contracts, passive page reads and existing student actions. Version 0.8.1 Linux CI passed 2,522 tests,
   including all 13 PostgreSQL cases, with two native OCR cases skipped; both
   OCR tests passed locally. Two upstream warnings remain: Starlette's test-client
   httpx deprecation and MCP/Pydantic's settings forward reference.
 - Real stdio MCP subprocess: initialize, tools/list, schemas, structured results,
   mutation annotations, and capabilities passed on protocol `2025-11-25`.
-  The surface has **71 tools**, **69 prepared action kinds**, and **24 execution
+  The surface has **80 tools**, **75 prepared action kinds**, and **28 execution
   permission groups**. No generic write executor is exposed.
+- Appointment checks cover self/student-group participants, complete bounded
+  past/future slot discovery, group/section eligibility, exact reservation-child
+  cancellation, capacity and limits, preserved comments, stale preflight and
+  uncertain readback. Real MCP tests verify separate calendar/appointment routes.
+  A concurrent-booking case demonstrates native replace-all rescheduling: known
+  deletion/new booking/final inventory can be verified while full cancelled-set
+  coverage remains false. No upstream expected-count condition is claimed.
+- Self-profile checks exclude calendar capabilities and administrative fields,
+  preserve returned primary email, verify explicit rename permission and three
+  exact names, and test native SIS behavior. Five supported boolean settings
+  have independent readback and preservation checks. Real MCP tests cover scopes,
+  wrong executors and replay; locale/timezone and avatars remain separate.
+- Dashboard checks use the native card collection, complete requested permutation,
+  merged saved positions, legacy numeric values, current-user/K5 state and exact
+  readback. Native course K5 flags remain snapshot-bound without incorrectly
+  deciding the user's layout. Saved order does not prove the active dashboard
+  view; receipts retain that limitation. Encrypted receipt restart and older
+  module-progress receipt regressions pass. No mutation retry/redirect is allowed.
+- Inbox send regressions model native string recipient parameters and the distinct
+  direct-group versus forced-new individual batch paths. Independent non-marking
+  reads verify exact per-thread audiences, participants, current-author message,
+  subject and absence of attachments/forwarded content. Group sends must produce
+  one thread; individual sends must produce one new thread per recipient. Malformed
+  acknowledgements, unexpected audiences and uncertain results cannot be replayed.
 - Horizon regressions model single-item SHOW completing a must-view requirement.
   Public item opening, URL routes, preparation, preflight and readback never use
   SHOW. Collection lookup is bounded, closes pagination, pins its path and refuses
@@ -112,9 +136,9 @@ These checks do not establish complete Canvas app parity or a production service
   copies successfully with 42 tools, 27 actions, and 11 permission groups.
   Clean extracted packages also bootstrapped
   their bundled Python packages and ran a real MCP session.
-- A clean extracted 0.8.1 MCPB installed its bundled packages through UV and
-  launched a real stdio session with all 71 tools, 69 actions and 24 execution
-  groups, using synthetic credentials, an isolated Python 3.12 install/cache and temporary storage. The cold launch installed 37 dependencies and completed protocol validation in 7.31 seconds; a network guard recorded zero Canvas requests. This
+- A clean extracted 0.9.0 MCPB installed its bundled packages through UV and
+  launched a real stdio session with all 80 tools, 75 actions and 28 execution
+  groups, using synthetic credentials, an isolated Python 3.12 install/cache and temporary storage. The cold launch installed 37 packages and completed protocol validation in 11.83 seconds; a network guard recorded zero Canvas requests. All 28 execution-group boundaries passed with writes disabled and enabled. This
   validates the packaged runtime, separately from native client installation.
 - Source releases use an allowlist, SHA-256 manifests, safe archive paths, and a
   private-path/school-marker scan. A known private-token scan found zero matches
@@ -129,7 +153,7 @@ These checks do not establish complete Canvas app parity or a production service
   plugin archives, and Docker image.
 
 - The public [source repository](https://github.com/Aadi-FTC-12868/canvas-connector)
-  has its MIT license, tracked source history, and [passing 0.8.0 Linux CI](https://github.com/Aadi-FTC-12868/canvas-connector/actions/runs/41398653457).
+  has its MIT license, tracked source history, and [passing 0.8.1 Linux CI](https://github.com/Aadi-FTC-12868/canvas-connector/actions/runs/41401128094).
   The website serves the reviewed source and install packages.
 - A reproducible [synthetic workload](BENCHMARKS.md) checked 1,000 authenticated
   profile requests across 64 accounts with one and two SQLite workers. Both runs

@@ -27,7 +27,7 @@ from canvas_py.endpoints.file_uploads import UploadContext
 from canvas_py.endpoints.submissions import SubmitFileUpload
 
 from .responses import dump
-from . import module_progress, student_actions, personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback
+from . import module_progress, student_actions, personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards
 
 PositiveId = Annotated[int, Field(gt=0, strict=True)]
 Text = Annotated[str, Field(min_length=1, max_length=100_000)]
@@ -178,14 +178,15 @@ ActionRequest = Annotated[Union[SubmitText, SubmitURL, SubmitFiles, SubmissionCo
     group_content.GroupContentActionTypes, enrollments.InvitationActionTypes,
     bookmarks.BookmarkActionTypes, what_if_grades.WhatIfActionTypes, mastery_paths.MasteryPathActionTypes,
     group_memberships.GroupMembershipActionTypes, discussion_attachments.DiscussionAttachmentActionTypes,
-    feedback.FeedbackActionTypes], Field(discriminator="kind")]
+    feedback.FeedbackActionTypes, appointments.AppointmentActionTypes, self_profile.SelfProfileActionTypes,
+    dashboard_cards.DashboardCardActionTypes], Field(discriminator="kind")]
 ACTION_ADAPTER = TypeAdapter(ActionRequest)
 ACTION_KINDS = ["upload", "submit_files", "submit_text", "submit_url", "submission_comment",
                 "discussion_post", "discussion_reply", "inbox_send", "inbox_reply", "inbox_update",
                 "planner_create", "planner_update", "planner_delete", "planner_override", *student_actions.KINDS, *module_progress.KINDS,
                 *personal_files.KINDS, *preferences.KINDS, *group_content.KINDS, *enrollments.KINDS,
                 *bookmarks.KINDS, *what_if_grades.KINDS, *mastery_paths.KINDS, *group_memberships.KINDS,
-                *discussion_attachments.KINDS, *feedback.KINDS]
+                *discussion_attachments.KINDS, *feedback.KINDS, *appointments.KINDS, *self_profile.KINDS, *dashboard_cards.KINDS]
 EXECUTE_ROUTES = {"upload": "canvas_upload_file", "submission_comment": "canvas_add_submission_comment",
     **{kind: "canvas_submit_assignment" for kind in ("submit_files", "submit_text", "submit_url")},
     **{kind: "canvas_post_discussion" for kind in ("discussion_post", "discussion_reply")},
@@ -194,7 +195,7 @@ EXECUTE_ROUTES = {"upload": "canvas_upload_file", "submission_comment": "canvas_
     **{kind: "canvas_update_planner" for kind in ("planner_create", "planner_update", "planner_delete", "planner_override")},
     **student_actions.ROUTES, **module_progress.ROUTES, **personal_files.ROUTES,
     **preferences.ROUTES, **group_content.ROUTES, **enrollments.ROUTES, **bookmarks.ROUTES, **what_if_grades.ROUTES, **mastery_paths.ROUTES, **group_memberships.ROUTES,
-    **discussion_attachments.ROUTES, **feedback.ROUTES}
+    **discussion_attachments.ROUTES, **feedback.ROUTES, **appointments.ROUTES, **self_profile.ROUTES, **dashboard_cards.ROUTES}
 
 
 class Request(CanvasRequest[Any]):
@@ -215,6 +216,95 @@ class Request(CanvasRequest[Any]):
 
 def account_key(canvas: Canvas) -> str:
     return hashlib.sha256((canvas.config.base_url + "\0" + canvas.config.token).encode()).hexdigest()
+
+
+def _send_inbox(canvas: Canvas, p: dict) -> dict:
+    """Verify native new-thread sends without changing legacy prepared payloads.
+
+    ConversationsController#create requires string recipients. force_new enters
+    ConversationBatch, whose deliver method creates one thread per recipient;
+    a real group send must use direct non-private initiation instead. Batch
+    acknowledgements contain summaries, so independent thread GETs establish
+    the new message ID, author, audience and exact attachment-free content.
+    Sources: app/controllers/conversations_controller.rb and
+    app/models/conversation_batch.rb in instructure/canvas-lms.
+    """
+    def request(path: str, *, method: str = "GET", body: dict | None = None, query: list | None = None) -> Any:
+        operation = Request(path, method=method, body=body, query=query)
+        operation.allow_retries = method == "GET"
+        operation.allow_redirects = False
+        return dump(canvas.send(operation))
+
+    def identity(value: Any) -> int:
+        if type(value) is not int or value <= 0:
+            raise ValueError("Canvas did not provide an exact Inbox identity")
+        return value
+
+    def identities(value: Any, *, maximum: int = 1000) -> set[int]:
+        if not isinstance(value, list) or len(value) > maximum:
+            raise ValueError("Canvas did not provide bounded Inbox identities")
+        result = {identity(item) for item in value}
+        if len(result) != len(value):
+            raise ValueError("Canvas returned duplicate Inbox identities")
+        return result
+
+    profile = request("users/self/profile")
+    actor = identity(profile.get("id") if isinstance(profile, dict) else None)
+    recipients = identities(p["recipients"], maximum=20)
+    if actor in recipients and len(recipients) > 1:
+        raise ValueError("Canvas omits self from mixed recipient lists; review recipients without self")
+    groups = [frozenset(recipients)] if p["group_conversation"] else [frozenset([recipient]) for recipient in recipients]
+    expected_audiences = {group - {actor} for group in groups}
+    posted = request("conversations", method="POST", body={
+        "recipients": [str(recipient) for recipient in p["recipients"]],
+        "subject": p["subject"], "body": p["body"],
+        "force_new": not p["group_conversation"],
+        "group_conversation": p["group_conversation"], "mode": "sync"})
+    if not isinstance(posted, list) or len(posted) != len(groups) or any(not isinstance(row, dict) for row in posted):
+        raise ValueError("Canvas did not return the complete requested conversation set")
+    identities([row.get("id") for row in posted], maximum=20)
+    verified, actual_audiences = [], set()
+    for thread in posted:
+        thread_id = identity(thread.get("id"))
+        readback = request(f"conversations/{thread_id}", query=[("auto_mark_as_read", False)])
+        if not isinstance(readback, dict) or identity(readback.get("id")) != thread_id:
+            raise ValueError("Canvas returned a different conversation during verification")
+        audience = frozenset(identities(readback.get("audience"), maximum=20))
+        if audience not in expected_audiences or audience in actual_audiences:
+            raise ValueError("Canvas did not confirm the exact reviewed recipient mapping")
+        actual_audiences.add(audience)
+        if readback.get("subject") != p["subject"] or readback.get("private") is not False:
+            raise ValueError("Canvas did not confirm a new conversation with the reviewed subject")
+        participants = readback.get("participants")
+        if (not isinstance(participants, list) or any(not isinstance(row, dict) for row in participants)
+                or identities([row.get("id") for row in participants], maximum=21) != audience | {actor}):
+            raise ValueError("Canvas did not confirm the exact conversation participants")
+        messages = readback.get("messages")
+        if not isinstance(messages, list) or len(messages) > 1000 or any(not isinstance(row, dict) for row in messages):
+            raise ValueError("Canvas did not provide complete bounded conversation messages")
+        identities([message.get("id") for message in messages])
+        authored = [message for message in messages if identity(message.get("author_id")) == actor]
+        if len(authored) != 1:
+            raise ValueError("Canvas did not independently identify exactly one new authored message")
+        message = authored[0]
+        if (message.get("body") != p["body"] or message.get("generated") is not False
+                or message.get("attachments") != [] or message.get("forwarded_messages") != []
+                or "media_comment" not in message or message["media_comment"] is not None
+                or identities(message.get("participating_user_ids"), maximum=21) != audience | {actor}):
+            raise ValueError("Canvas did not confirm the exact authored message, recipients and empty attachments")
+        # Direct group creation supplies the posted message ID. Native batch
+        # creation omits messages; its fresh, non-private threads are read above.
+        if "messages" in thread:
+            acknowledged = thread["messages"]
+            if (not isinstance(acknowledged, list) or len(acknowledged) != 1
+                    or not isinstance(acknowledged[0], dict)
+                    or identity(acknowledged[0].get("id")) != message["id"]):
+                raise ValueError("Canvas message acknowledgement and independent readback disagree")
+        verified.append(readback)
+    after = request("users/self/profile")
+    if not isinstance(after, dict) or identity(after.get("id")) != actor or actual_audiences != expected_audiences:
+        raise ValueError("Canvas actor or recipient set changed during message verification")
+    return {"verified": True, "conversations": verified}
 
 
 def _assignment(canvas: Canvas, p: dict, submission_type: str | None, *, require_own_submission: bool = False) -> dict:
@@ -409,7 +499,7 @@ class ActionStore:
 
     def _snapshot(self, canvas: Canvas, owner: str, p: dict) -> dict:
         kind = p["kind"]
-        for module in (personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback):
+        for module in (personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards):
             if kind in module.KINDS:
                 return module.snapshot(canvas, p)
         if kind == "upload" and p.get("parent_folder_id") is not None:
@@ -703,7 +793,7 @@ class ActionStore:
 
     def _perform(self, canvas: Canvas, p: dict, target: dict) -> dict:
         kind = p["kind"]
-        for module in (personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback):
+        for module in (personal_files, preferences, group_content, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, discussion_attachments, feedback, appointments, self_profile, dashboard_cards):
             if kind in module.KINDS:
                 return module.perform(canvas, p, target)
         if kind in module_progress.KINDS:
@@ -790,13 +880,10 @@ class ActionStore:
             if not found or found.get("message") != posted.get("message") or found.get("deleted"):
                 raise ValueError("Discussion entry not confirmed")
             return {"verified": True, "entry": found}
-        if kind in {"inbox_send", "inbox_reply"}:
-            if kind == "inbox_send":
-                posted = canvas.send(Request("conversations", method="POST", body={"recipients": p["recipients"], "subject": p["subject"],
-                    "body": p["body"], "force_new": True, "group_conversation": p["group_conversation"], "mode": "sync"}))
-                threads = posted if isinstance(posted, list) else [posted]
-            else:
-                threads = [canvas.send(Request(f"conversations/{p['conversation_id']}/add_message", method="POST", body={"body": p["body"]}))]
+        if kind == "inbox_send":
+            return _send_inbox(canvas, p)
+        if kind == "inbox_reply":
+            threads = [canvas.send(Request(f"conversations/{p['conversation_id']}/add_message", method="POST", body={"body": p["body"]}))]
             if not threads:
                 raise ValueError("No conversation returned")
             verified = []

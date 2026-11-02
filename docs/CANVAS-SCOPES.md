@@ -1,6 +1,6 @@
 # Canvas developer-key scope manifest
 
-This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, `module_progress.py`, `personal_files.py`, `preferences.py`, `group_content.py`, `enrollments.py`, `bookmarks.py`, `what_if_grades.py`, `mastery_paths.py`, `group_memberships.py`, `discussion_attachments.py`, and `feedback.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
+This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, `module_progress.py`, `personal_files.py`, `preferences.py`, `group_content.py`, `enrollments.py`, `bookmarks.py`, `what_if_grades.py`, `mastery_paths.py`, `group_memberships.py`, `discussion_attachments.py`, `feedback.py`, `appointments.py`, `self_profile.py`, and `dashboard_cards.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
 
 Canvas developer-key scopes use the exact route-template spelling below. For example, an API call containing `self` can correspond to a scope containing `:user_id`; keep Canvas's documented placeholder names rather than substituting real IDs. These upstream scopes are separate from this connector's `canvas:read` and `canvas:write` grants. An institutional administrator enables the upstream scopes. See [Canvas developer-key configuration](https://developerdocs.instructure.com/services/canvas/oauth2/file.developer_keys).
 
@@ -300,3 +300,31 @@ url:POST|/api/graphql
 The optional GraphQL scope is **broad upstream access**, not a read-only Canvas scope: it can authorize queries and mutations within the user's existing permissions. Omit it if that scope is unacceptable; general feedback-state reads/changes then remain unavailable. Rubric/annotation markers use the dedicated REST routes and do not require GraphQL. This connector exposes only one fixed, side-effect-free GraphQL query for an independently verified own submission's identity and `readState`; there is no arbitrary query or mutation tool.
 
 The REST submission include for read state can itself mark feedback read, so it is never used for preparation or verification. Marking aggregate feedback read explicitly reviews and performs three non-atomic item writes (grade, comment, rubric); comment marking covers all visible comments across attempts. Failure stops the sequence and leaves the receipt uncertain. The separate rubric-assessment/annotation preference flags do not establish aggregate read state. Feedback changes use their own write execution group and cannot grade, submit coursework or change another student's state. [Submissions](https://developerdocs.instructure.com/services/canvas/resources/submissions), [GraphQL scope](https://canvas.instructure.com/doc/api/graph_ql.html), [read-state resolver](https://github.com/instructure/canvas-lms/blob/master/app/graphql/types/submission_type.rb)
+
+## Own profile, personal settings and dashboard ordering
+
+These routes are fixed to the authenticated user. The profile reader compares profile and user-detail IDs and excludes private calendar feeds, SIS/LTI identifiers and raw avatar URLs. Names require Canvas's returned `can_update_name=true`; all three names are explicitly reviewed. The update uses Canvas's native `override_sis_stickiness=true` behavior, so an authorized user can change previously edited names. This flag does not bypass institution name-edit permissions. Settings use a small explicit boolean allowlist and never request `include[]=mobile_settings`.
+
+```text
+url:GET|/api/v1/users/:id
+url:PUT|/api/v1/users/:id
+url:GET|/api/v1/users/:id/settings
+url:PUT|/api/v1/users/:id/settings
+url:GET|/api/v1/dashboard/dashboard_cards
+url:GET|/api/v1/users/:id/dashboard_positions
+url:PUT|/api/v1/users/:id/dashboard_positions
+```
+
+The native cards route is defined in Canvas source but absent from the public Users API description. The adapter uses it rather than approximating the native card collection from favorites. Card ordering sends a complete permutation of the returned supported card set; the positions setter merges that patch, and readback checks preserved positions and saved native order, without establishing the selected dashboard view. A denied or unsupported native-card response requires a Canvas handoff. [Users API](https://developerdocs.instructure.com/services/canvas/resources/users), [dashboard route](https://github.com/instructure/canvas-lms/blob/master/config/routes.rb), [scope generation](https://github.com/instructure/canvas-lms/blob/master/lib/token_scopes.rb), [controller](https://github.com/instructure/canvas-lms/blob/master/app/controllers/users_controller.rb), [dashboard sorting](https://github.com/instructure/canvas-lms/blob/master/app/helpers/dashboard_helper.rb).
+
+## Student appointment reservations
+
+The appointment workflow reuses existing current-profile, course/enrollment, calendar-event read/delete and group-membership scopes. Additional routes are:
+
+```text
+url:GET|/api/v1/appointment_groups
+url:GET|/api/v1/appointment_groups/:id
+url:POST|/api/v1/calendar_events/:id/reservations
+```
+
+Discovery requests reservable appointment groups. Complete slot inventory uses the source-supported `appointment_group_ID` calendar context with explicit date bounds, rather than `all_events=true`. Reservation writes bind the exact student or verified candidate group; cancellation targets only a verified reservation child. Reserve preserves existing bookings. Reschedule uses `cancel_existing=true`, which replaces all bookings for that participant in the appointment group, so the adapter requires exactly one observed booking at preflight. Canvas provides no atomic expected-count guard: concurrent bookings may also be cancelled. Reschedule readback therefore reports incomplete coverage for the complete cancelled set, even when the known old deletion, new booking and final inventory are verified. No appointment-group creation, slot modification or arbitrary-participant route is exposed. [Appointment Groups API](https://developerdocs.instructure.com/services/canvas/resources/appointment_groups), [Calendar Events API](https://developerdocs.instructure.com/services/canvas/resources/calendar_events), [calendar controller](https://github.com/instructure/canvas-lms/blob/master/app/controllers/calendar_events_api_controller.rb), [reservation implementation](https://github.com/instructure/canvas-lms/blob/master/app/models/calendar_event.rb).

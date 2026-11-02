@@ -175,10 +175,19 @@ def test_inbox_messages_verified_without_mark_read(kind):
     p.update({"recipients": [8], "subject": "Hello"} if kind == "inbox_send" else {"conversation_id": 4})
     r = store.prepare(c, "a", p)
     after = {**existing, "messages": [{"id": 100, "body": "Message"}]}
-    c.send.return_value = [after] if kind == "inbox_send" else after
-    c.inbox.get.side_effect = [after] if kind == "inbox_send" else [existing, after]
+    if kind == "inbox_send":
+        after.update(private=False, participants=[{"id": 7}, {"id": 8}])
+        after["messages"][0].update(author_id=7, generated=False, attachments=[], forwarded_messages=[],
+                                    media_comment=None, participating_user_ids=[7, 8])
+        c.send.side_effect = [{"id": 7}, [{"id": 4}], after, {"id": 7}]
+    else:
+        c.send.return_value = after
+        c.inbox.get.side_effect = [existing, after]
     assert store.execute(c, "a", r["action_id"], lambda: None)["state"] == "succeeded"
     assert all(x.kwargs["auto_mark_as_read"] is False for x in c.inbox.get.call_args_list)
+    if kind == "inbox_send":
+        readback = next(call.args[0] for call in c.send.call_args_list if call.args[0].path == "conversations/4")
+        assert readback.query_pairs() == [("auto_mark_as_read", False)]
 
 
 def test_upload_has_no_host_path_and_does_not_count_as_submission(tmp_path):
