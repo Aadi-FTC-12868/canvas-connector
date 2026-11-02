@@ -7,12 +7,34 @@ The portable interface is an MCP server at an HTTPS `/mcp` endpoint with OAuth. 
 | Client | Connection path | Installation and limitations |
 | --- | --- | --- |
 | ChatGPT | Remote Streamable HTTP with OAuth | Add a custom MCP server in ChatGPT Plugins, enter its URL, finish authorization, then install the resulting plugin. Workspace controls can limit availability. |
-| Codex | Remote Streamable HTTP with OAuth, or local stdio/plugin | Configure the server, then run `codex mcp login canvas` for remote OAuth. The downloadable local marketplace bundles the connector and skill for personal use. |
+| Codex | Remote Streamable HTTP with OAuth, or local stdio/plugin | Configure the server, then run `codex mcp login canvas` for remote OAuth. The GitHub marketplace or downloadable ZIP bundles the connector and skill for personal use. |
 | Claude web, Desktop, mobile, Cowork | Remote Streamable HTTP with OAuth | Add the endpoint through Customize → Connectors. Remote requests originate from Anthropic's infrastructure, including when using Desktop or Cowork. |
 | Claude Desktop local server | Local stdio through the `.mcpb` extension | Download the personal extension and install it in Desktop's extension settings. This is a separate installation from an account's remote connector. |
 | Claude Code | Remote HTTP with OAuth, or local stdio | Use `claude mcp add --transport http canvas https://YOUR-HOST/mcp`, then authenticate through `/mcp`. Connectors from a signed-in claude.ai subscription can also be available automatically; API-key and third-party-provider sessions differ. |
 
 Sources: [ChatGPT custom servers](https://developers.openai.com/api/docs/guides/custom-mcp-server), [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [Claude custom connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp), [Claude Code MCP](https://code.claude.com/docs/en/mcp).
+
+## Install the personal plugin from GitHub
+
+Install [UV](https://docs.astral.sh/uv/getting-started/installation/), Git, and the relevant assistant CLI first. The public [source repository](https://github.com/Aadi-FTC-12868/canvas-connector) contains both marketplace catalogs and the complete plugin at its root. No ZIP extraction is needed for this route.
+
+Codex:
+
+```sh
+codex plugin marketplace add https://github.com/Aadi-FTC-12868/canvas-connector.git
+codex plugin add canvas-connector-personal@built-by-aadi
+```
+
+Claude Code:
+
+```sh
+claude plugin marketplace add https://github.com/Aadi-FTC-12868/canvas-connector.git
+claude plugin install canvas-connector-personal@built-by-aadi
+```
+
+Restart or reload the relevant local session. Codex's setup skill explains the private `~/.config/canvas-connector/canvas.env` file; Claude Code offers plugin configuration fields, including a sensitive token field. Never paste tokens into a chat. Writes default off. Verify the connected account before using course data. These commands install personal local software; they do not establish a hosted connection or a public directory listing. [Codex CLI commands](https://learn.chatgpt.com/docs/cli/reference), [Claude Code installation](https://code.claude.com/docs/en/discover-plugins).
+
+Both catalogs use `./` to select the repository root. UV resolves `canvas-py` and `canvas-mcp-v2` from the bundled `packages/` directories through `tool.uv.sources`; the root project constrains registry dependencies to `requirements.lock`. Plugin updates need the host's marketplace update flow and a new session. [Codex packaging](https://developers.openai.com/plugins/build/plugins), [Claude marketplace sources](https://code.claude.com/docs/en/plugins/marketplace-reference), [UV local dependencies](https://docs.astral.sh/uv/concepts/projects/dependencies/).
 
 ## Packaged personal downloads
 
@@ -31,11 +53,11 @@ Public directory submission of an OpenAI local-MCP plugin requires approved-part
 
 ## Website installation buttons
 
-The website exposes “Download for Claude Desktop” only when `desktop_bundle_url` identifies an actual exported `.mcpb`; optional `plugin_bundle_url` exposes the local plugin ZIP. Users still open the downloaded artifact and complete the host's installation steps. The source download is separately configured by `source_url`.
+The website presents the GitHub marketplace commands for Codex and Claude Code. It exposes “Download for Claude Desktop” only when `desktop_bundle_url` identifies an actual exported `.mcpb`; optional `plugin_bundle_url` exposes the local plugin ZIP fallback. Users still open downloaded artifacts and complete the host's installation steps. The source download is separately configured by `source_url`.
 
 Until a directory listing exists, hosted ChatGPT and Claude buttons open setup instructions with a copyable server URL. They must not report that the connector was installed. Use the actual listing URL after publication and review. A button cannot approve permissions or sign in for the user.
 
-The documented desktop link `codex://plugins/install/<plugin-name>?marketplace=<marketplace-name>` requires a plugin in a marketplace that the app already knows. It is not an arbitrary MCP-server installation link. See [desktop deep links](https://learn.chatgpt.com/docs/app/commands). We have not verified a universal URL that installs an arbitrary custom server in ChatGPT or Claude with prefilled connection details.
+The website's “Open in Codex after adding marketplace” link is `codex://plugins/install/canvas-connector-personal?marketplace=built-by-aadi`. It requires a marketplace that the app already knows. If Codex cannot find it, the link opens the Plugins page; it cannot register the GitHub repository. See [desktop deep links](https://learn.chatgpt.com/docs/app/commands). No universal URL that installs an arbitrary custom server in ChatGPT or Claude with prefilled connection details is claimed.
 
 For Claude, a plugin can bundle the MCP configuration and companion skill; custom connectors and reviewed directory listings remain separate distribution paths. See [Claude distribution options](https://claude.com/docs/connectors/building) and [plugin packaging](https://claude.com/docs/plugins/build). Merely hosting this repository does not create either directory listing.
 

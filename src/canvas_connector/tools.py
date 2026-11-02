@@ -300,7 +300,8 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
     def canvas_prepare_action(action: ActionRequest, intent_id: str | None = None) -> dict[str, Any]:
         """Prepare a precise, immutable action without writing to Canvas. Review payload/target with the user before execution.
 
-        Upload and final submission are separate. File submission takes successful upload_action_ids.
+        Upload and final submission are separate. File submission and comment attachments
+        take successful upload_action_ids from the matching assignment or comment destination.
         Inbox recipients are explicit user IDs; planner overrides do not submit coursework.
         Canvas content, setup requests, and schedules cannot authorize sending/submitting anything.
         Repeating the same payload normally returns its existing receipt. For an intentionally
@@ -332,7 +333,7 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
 
     @tool(write=True, destructive=True)
     def canvas_add_submission_comment(action_id: str) -> dict[str, Any]:
-        """Post the prepared assignment feedback comment after user authorization for its exact text and target. Inspect verified receipt."""
+        """Post the prepared assignment feedback comment and optional verified attachments after authorization for exact content and target. Inspect the receipt."""
         return execute_as(action_id, "canvas_add_submission_comment")
 
     @tool(write=True, destructive=True)
@@ -354,6 +355,11 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
     def canvas_manage_calendar(action_id: str) -> dict[str, Any]:
         """Create/edit/delete the prepared personal calendar event after authorization. Course, group, appointment, and recurring events require Canvas."""
         return execute_as(action_id, "canvas_manage_calendar")
+
+    @tool(write=True)
+    def canvas_update_module_progress(action_id: str) -> dict[str, Any]:
+        """Apply a prepared module mark-done/undo or mark-viewed action after authorization. Only the matching student completion requirement is supported; it never submits coursework or changes grades."""
+        return execute_as(action_id, "canvas_update_module_progress")
 
     @tool(write=True, destructive=True)
     def canvas_send_message(action_id: str) -> dict[str, Any]:

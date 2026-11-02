@@ -18,6 +18,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       CONNECTOR_TEST_POSTGRES_URL: postgresql://canvas:synthetic-ci-only@127.0.0.1:5432/canvas
+      CONNECTOR_BENCHMARK_POSTGRES_URL: postgresql://canvas:synthetic-ci-only@127.0.0.1:5432/canvas
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,6 +31,7 @@ jobs:
       - run: python -m pip check
       - run: python scripts/build_mcpb.py
       - run: python scripts/build_plugins.py
+      - run: python scripts/benchmark_hosted.py --database postgres --workers 2 --concurrency 32 --requests 1000 --output dist/benchmark-postgres.json
       - run: docker build -t canvas-connector:verify .
       - run: python scripts/check_container.py
       - uses: actions/upload-artifact@v4
@@ -39,3 +41,4 @@ jobs:
             dist/*-source.zip
             dist/*.mcpb
             dist/*-plugins.zip
+            dist/benchmark-*.json

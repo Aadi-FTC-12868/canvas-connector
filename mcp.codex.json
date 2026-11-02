@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "canvas": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--python",
+        "3.12",
+        "--directory",
+        "${PLUGIN_ROOT}",
+        "--no-dev",
+        "packaging/plugin/entrypoint.py"
+      ],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "canvas-connector-personal",
+  "version": "0.5.0",
+  "description": "Personal local Canvas navigation and specifically authorized student actions.",
+  "author": {
+    "name": "Aadi Chandraya"
+  },
+  "license": "MIT",
+  "keywords": [
+    "canvas",
+    "education",
+    "personal"
+  ],
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/setup/SKILL.md",
+      "requires_local_executor": true
+    }
+  },
+  "homepage": "https://builtbyaadi.com/canvas-connector/",
+  "repository": "https://github.com/Aadi-FTC-12868/canvas-connector"
+}

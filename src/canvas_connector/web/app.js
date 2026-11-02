@@ -6,11 +6,26 @@ const clients = {
   code: {name:'Claude Code', description:'Add the remote connector over HTTP, or use a personal local stdio server.', url:'https://code.claude.com/docs/en/mcp', steps:['Add your hosted endpoint: claude mcp add --transport http canvas <connector-address>','Run /mcp in Claude Code and authenticate Canvas.','Ask for your Canvas dashboard to check the connection.'], local:'Local alternative: claude mcp add --transport stdio canvas -- /absolute/path/canvas-connector stdio. Configure CANVAS_ENV_PATH privately before launch.'}
 };
 const tabs = [...document.querySelectorAll('[role=tab]')];
+const repository = 'https://github.com/Aadi-FTC-12868/canvas-connector';
+const pluginCommands = {
+  codex: [`codex plugin marketplace add ${repository}.git`, 'codex plugin add canvas-connector-personal@built-by-aadi'],
+  code: [`claude plugin marketplace add ${repository}.git`, 'claude plugin install canvas-connector-personal@built-by-aadi']
+};
 let downloads = {desktop:null, plugin:null};
 function showDownloads(client) {
   document.querySelector('#desktop-install').hidden = !(downloads.desktop && client === 'claude');
-  document.querySelector('#plugin-install').hidden = !(downloads.plugin && ['codex','code'].includes(client));
+  document.querySelector('#plugin-install').hidden = !['codex','code'].includes(client);
+  document.querySelector('#download-plugin').hidden = !downloads.plugin;
   document.querySelector('#plugin-title').textContent = `Personal local plugin for ${clients[client].name}`;
+  const commands = pluginCommands[client] || [];
+  document.querySelector('#plugin-register').value = commands[0] || '';
+  document.querySelector('#plugin-add').value = commands[1] || '';
+  document.querySelector('#plugin-account').textContent = client === 'code'
+    ? 'Enter your Canvas address and personal token in Claude Code’s plugin configuration fields. Keep writes off unless you need them, then reload the plugin and check the connected account.'
+    : 'After installation, restart your session and run the plugin’s setup skill. It guides you through a private local credentials file. Never paste a token into chat.';
+  document.querySelector('#codex-plugin-link').hidden = client !== 'codex';
+  document.querySelector('#codex-link-note').hidden = client !== 'codex';
+  document.querySelector('#plugin-copy-status').textContent = '';
 }
 function downloadTarget(value, extension) {
   if(typeof value !== 'string' || !value.trim()) return null;
@@ -42,6 +57,12 @@ tabs.forEach((tab, index) => {
     if(event.key==='Home') target=tabs[0]; if(event.key==='End') target=tabs.at(-1);
     if(target){event.preventDefault();choose(target);target.focus();}
   });
+});
+document.querySelector('#copy-plugin').addEventListener('click', async () => {
+  const status = document.querySelector('#plugin-copy-status');
+  const value = [document.querySelector('#plugin-register').value, document.querySelector('#plugin-add').value].join('\n');
+  try {await navigator.clipboard.writeText(value);status.textContent='Install commands copied. Run them in your terminal, then finish account setup.';}
+  catch {document.querySelector('#plugin-register').select();status.textContent='Copy each command with your keyboard and run them in order.';}
 });
 document.querySelector('#copy').addEventListener('click', async () => {
   const status = document.querySelector('#copy-status');

@@ -54,6 +54,16 @@ download or plugin registration does not prove Canvas access. Your school may
 restrict API access. Do not use another person's token or share this configured
 installation. Refer to the included license and security documentation.
 
+## GitHub alternative
+
+You can install directly from the [public source repository](https://github.com/Aadi-FTC-12868/canvas-connector)
+instead of retaining an extracted ZIP. Add
+`https://github.com/Aadi-FTC-12868/canvas-connector.git` as the marketplace in your
+assistant, then install `canvas-connector-personal@built-by-aadi`. That marketplace
+has a different name from this ZIP's `built-by-aadi-local`; choose one installation
+to avoid duplicate Canvas tool sets. The same personal configuration and write
+defaults apply. See the repository's compatibility guide for the exact commands.
+
 Official setup references: [Codex plugins](https://developers.openai.com/plugins/build/plugins),
 [Claude Code plugins](https://code.claude.com/docs/en/discover-plugins),
 [Canvas OAuth](https://developerdocs.instructure.com/services/canvas/oauth2/file.oauth).

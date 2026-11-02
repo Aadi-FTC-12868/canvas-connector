@@ -144,7 +144,7 @@ def test_comment_verified_by_new_comment_id():
     c, store = client(), ActionStore()
     r = store.prepare(c, "a", {"kind": "submission_comment", "course_id": 1, "assignment_id": 2, "text": "Thank you"})
     before = copy.deepcopy(c.submissions.get.return_value)
-    after = {**before, "submission_comments": [{"id": 90, "comment": "Thank you"}]}
+    after = {**before, "submission_comments": [{"id": 90, "author_id": 7, "comment": "Thank you"}]}
     c.submissions.get.side_effect = [before, after]
     c.submissions.add_comment.return_value = after
     assert store.execute(c, "a", r["action_id"], lambda: None)["state"] == "succeeded"
@@ -187,7 +187,7 @@ def test_upload_has_no_host_path_and_does_not_count_as_submission(tmp_path):
     r = store.prepare(c, "a", {"kind": "upload", "filename": "paper.txt", "content_base64": base64.b64encode(data).decode()})
     assert "content_base64" not in r["review"]
     c.files.upload.return_value = {"id": 21, "display_name": "paper.txt"}
-    c.files.get.return_value = SimpleNamespace(size=len(data))
+    c.files.get.return_value = SimpleNamespace(id=21, size=len(data))
     c.files.download.side_effect = lambda file, path, **kwargs: path.write_bytes(data)
     result = store.execute(c, "a", r["action_id"], lambda: None)
     assert result["state"] == "succeeded"
@@ -326,7 +326,7 @@ def test_verified_file_upload_then_final_submission_are_separate():
     upload = store.prepare(c, "a", {"kind": "upload", "filename": "paper.txt", "content_base64": base64.b64encode(raw).decode(),
         "destination": "assignment", "course_id": 1, "assignment_id": 2})
     c.files.upload.return_value = {"id": 55, "display_name": "paper.txt"}
-    c.files.get.return_value = SimpleNamespace(size=len(raw))
+    c.files.get.return_value = SimpleNamespace(id=55, size=len(raw))
     c.files.download.side_effect = lambda file, path, **kwargs: path.write_bytes(raw)
     assert store.execute(c, "a", upload["action_id"], lambda: None)["result"]["submitted"] is False
     c.send.assert_not_called()

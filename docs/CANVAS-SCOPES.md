@@ -1,6 +1,6 @@
 # Canvas developer-key scope manifest
 
-This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py` and `student_actions.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
+This is the reviewed endpoint inventory for the new adapter in `src/canvas_connector/tools.py` and `actions.py`, `student_actions.py`, and `module_progress.py`, plus the navigation and document-reader calls they use. It covers the implemented student surface, not every endpoint in the bundled library or every Canvas feature. Reconcile this inventory whenever those call sites change.
 
 Canvas developer-key scopes use the exact route-template spelling below. For example, an API call containing `self` can correspond to a scope containing `:user_id`; keep Canvas's documented placeholder names rather than substituting real IDs. These upstream scopes are separate from this connector's `canvas:read` and `canvas:write` grants. An institutional administrator enables the upstream scopes. See [Canvas developer-key configuration](https://developerdocs.instructure.com/services/canvas/oauth2/file.developer_keys).
 
@@ -14,6 +14,7 @@ url:GET|/api/v1/courses
 url:GET|/api/v1/courses/:id
 url:GET|/api/v1/courses/:course_id/tabs
 url:GET|/api/v1/courses/:course_id/modules
+url:GET|/api/v1/courses/:course_id/modules/:id
 url:GET|/api/v1/courses/:course_id/modules/:module_id/items
 url:GET|/api/v1/courses/:course_id/modules/:module_id/items/:id
 url:GET|/api/v1/courses/:course_id/module_item_sequence
@@ -70,6 +71,10 @@ Include the relevant read scopes above when enabling an action. Writes are follo
 
 ```text
 url:POST|/api/v1/users/:user_id/files
+url:POST|/api/v1/courses/:course_id/assignments/:assignment_id/submissions/:user_id/comments/files
+url:PUT|/api/v1/courses/:course_id/modules/:module_id/items/:id/done
+url:DELETE|/api/v1/courses/:course_id/modules/:module_id/items/:id/done
+url:POST|/api/v1/courses/:course_id/modules/:module_id/items/:id/mark_read
 url:POST|/api/v1/courses/:course_id/assignments/:assignment_id/submissions/:user_id/files
 url:POST|/api/v1/courses/:course_id/assignments/:assignment_id/submissions
 url:PUT|/api/v1/courses/:course_id/assignments/:assignment_id/submissions/:user_id

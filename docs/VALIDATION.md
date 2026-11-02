@@ -1,17 +1,18 @@
 # Validation record
 
-Development release 0.4.0, validated November 1, 2026 (America/Chicago).
+Development release 0.5.0, validated November 1, 2026 (America/Chicago).
 These checks do not establish complete Canvas app parity or a production service.
 
 ## Completed
 
-- Python 3.12: **656 tests passed**, including inherited library/adapter checks,
-  student actions, network security, OAuth, shared storage, and PostgreSQL tests.
+- Python 3.12 local check: **762 tests passed; 13 PostgreSQL tests skipped**
+  without a local PostgreSQL instance. The prior 0.4.0 release passed all 656
+  tests including PostgreSQL in Linux CI; the expanded suite is also run there.
   Two upstream warnings remain: Starlette's test-client httpx deprecation and an
   MCP/Pydantic settings forward-reference warning.
 - Real stdio MCP subprocess: initialize, tools/list, schemas, structured results,
   mutation annotations, and capabilities passed on protocol `2025-11-25`.
-  The surface has **41 tools**, **25 prepared action kinds**, and **10 execution
+  The surface has **42 tools**, **27 prepared action kinds**, and **11 execution
   permission groups**. No generic write executor is exposed.
 - The earlier read-only live Canvas subprocess check authenticated the profile
   and refreshed dashboard; the dashboard response was 2,729 bytes. No live
@@ -35,7 +36,10 @@ These checks do not establish complete Canvas app parity or a production service
   leases, cancellation races, stale workers, and uncertain outcomes. New
   discussion/comment/calendar actions use both stateful fixtures and the actual
   Canvas HTTP client with a mock transport. Personal calendar restrictions and
-  attachment-preserving refusal are tested.
+  attachment-preserving refusal are tested. Comment attachments check exact
+  uploaded bytes, context, ownership, and saved attachment identity. Module
+  progress checks require a matching requirement, known access state, and exact
+  completion readback. API field availability was checked against Canvas source.
 - Public-only network protection checks URL validation, private/mixed DNS
   rejection, pinned addresses, upload client injection, and same-origin upload
   rebinding. Secret-bearing HTML links are removed from output.
@@ -45,9 +49,11 @@ These checks do not establish complete Canvas app parity or a production service
   The smoke test used synthetic configuration and cleaned up its temporary image.
 - Claude Desktop MCPB validates with the official MCPB tooling. Portable plugin
   manifests validate against the official Agent Plugins schemas. Claude Code
-  validates the plugin/catalog; Codex discovers the local marketplace without
-  changing the user's configuration. Clean extracted packages bootstrapped their
-  bundled Python packages and ran a real MCP session with synthetic credentials.
+  validates the plugin/catalog. Both Codex and Claude Code installed the
+  marketplace/plugin into isolated temporary settings without changing normal
+  user settings. A fresh UV launch from the installed cache ran a real MCP
+  session with synthetic credentials. Clean extracted packages also bootstrapped
+  their bundled Python packages and ran a real MCP session.
 - Source releases use an allowlist, SHA-256 manifests, safe archive paths, and a
   private-path/school-marker scan. A known private-token scan found zero matches
   without printing or copying that token. Clean source extraction installed,
@@ -60,6 +66,14 @@ These checks do not establish complete Canvas app parity or a production service
   passed. CI reproduces tests with PostgreSQL and builds the source, extension,
   plugin archives, and Docker image.
 
+- The public [source repository](https://github.com/Aadi-FTC-12868/canvas-connector)
+  has its MIT license, tracked source history, and a passing Linux CI baseline.
+  The website serves the reviewed source and install packages.
+- A reproducible [synthetic workload](BENCHMARKS.md) checked 1,000 authenticated
+  profile requests across 64 accounts with one and two SQLite workers. Both runs
+  returned the correct identity without errors; throughput did not improve with
+  two workers. The same script supports PostgreSQL and runs in CI.
+
 ## Still requires live verification
 
 - Institution OAuth sign-in needs an enabled Canvas developer key and public
@@ -68,7 +82,7 @@ These checks do not establish complete Canvas app parity or a production service
   installation and Canvas authorization in every ChatGPT, Claude Desktop/web/
   Cowork, Codex, and Claude Code client have not all been completed. Schema or
   CLI validation is not evidence of successful host-app installation.
-- No public MCP service, provider app-directory listing, GitHub repository,
+- No public MCP service or provider app-directory listing,
   production capacity benchmark, real multi-host deployment, or independent
   security audit has been completed. A downloadable setup page is separate from
   an authenticated hosted service.

@@ -27,7 +27,7 @@ from canvas_py.endpoints.file_uploads import UploadContext
 from canvas_py.endpoints.submissions import SubmitFileUpload
 
 from .responses import dump
-from . import student_actions
+from . import module_progress, student_actions
 
 PositiveId = Annotated[int, Field(gt=0, strict=True)]
 Text = Annotated[str, Field(min_length=1, max_length=100_000)]
@@ -68,6 +68,7 @@ class SubmitFiles(AssignmentTarget):
 class SubmissionComment(AssignmentTarget):
     kind: Literal["submission_comment"]
     text: Text
+    upload_action_ids: Annotated[list[Annotated[str, Field(min_length=1, max_length=128)]], Field(max_length=20)] = Field(default_factory=list)
 
 
 class DiscussionPost(ActionModel):
@@ -143,7 +144,7 @@ class Upload(ActionModel):
     kind: Literal["upload"]
     filename: Annotated[str, Field(min_length=1, max_length=240)]
     content_base64: Annotated[str, Field(min_length=1, max_length=11_184_812)]
-    destination: Literal["user", "assignment"] = "user"
+    destination: Literal["user", "assignment", "submission_comment"] = "user"
     course_id: PositiveId | None = None
     assignment_id: PositiveId | None = None
 
@@ -156,8 +157,8 @@ class Upload(ActionModel):
 
     @model_validator(mode="after")
     def valid_target(self) -> Upload:
-        if self.destination == "assignment" and (self.course_id is None or self.assignment_id is None):
-            raise ValueError("Assignment upload requires course_id and assignment_id")
+        if self.destination in {"assignment", "submission_comment"} and (self.course_id is None or self.assignment_id is None):
+            raise ValueError("Assignment/comment upload requires course_id and assignment_id")
         if self.destination == "user" and (self.course_id is not None or self.assignment_id is not None):
             raise ValueError("Personal uploads cannot have an assignment target")
         raw = base64.b64decode(self.content_base64, validate=True)
@@ -169,18 +170,18 @@ class Upload(ActionModel):
 ActionRequest = Annotated[Union[SubmitText, SubmitURL, SubmitFiles, SubmissionComment,
     DiscussionPost, DiscussionReply, InboxSend, InboxReply, InboxUpdate,
     PlannerCreate, PlannerUpdate, PlannerDelete, PlannerOverride, Upload,
-    student_actions.StudentActionTypes], Field(discriminator="kind")]
+    student_actions.StudentActionTypes, module_progress.ModuleProgressActionTypes], Field(discriminator="kind")]
 ACTION_ADAPTER = TypeAdapter(ActionRequest)
 ACTION_KINDS = ["upload", "submit_files", "submit_text", "submit_url", "submission_comment",
                 "discussion_post", "discussion_reply", "inbox_send", "inbox_reply", "inbox_update",
-                "planner_create", "planner_update", "planner_delete", "planner_override", *student_actions.KINDS]
+                "planner_create", "planner_update", "planner_delete", "planner_override", *student_actions.KINDS, *module_progress.KINDS]
 EXECUTE_ROUTES = {"upload": "canvas_upload_file", "submission_comment": "canvas_add_submission_comment",
     **{kind: "canvas_submit_assignment" for kind in ("submit_files", "submit_text", "submit_url")},
     **{kind: "canvas_post_discussion" for kind in ("discussion_post", "discussion_reply")},
     **{kind: "canvas_send_message" for kind in ("inbox_send", "inbox_reply")},
     "inbox_update": "canvas_update_inbox",
     **{kind: "canvas_update_planner" for kind in ("planner_create", "planner_update", "planner_delete", "planner_override")},
-    **student_actions.ROUTES}
+    **student_actions.ROUTES, **module_progress.ROUTES}
 
 
 class Request(CanvasRequest[Any]):
@@ -203,12 +204,16 @@ def account_key(canvas: Canvas) -> str:
     return hashlib.sha256((canvas.config.base_url + "\0" + canvas.config.token).encode()).hexdigest()
 
 
-def _assignment(canvas: Canvas, p: dict, submission_type: str | None) -> dict:
+def _assignment(canvas: Canvas, p: dict, submission_type: str | None, *, require_own_submission: bool = False) -> dict:
     a = dump(canvas.assignments.get(p["course_id"], p["assignment_id"],
              include=["submission", "can_submit", "all_dates", "overrides"]))
     s = dump(canvas.submissions.get(p["course_id"], p["assignment_id"]))
     if a.get("id") != p["assignment_id"] or s.get("assignment_id") not in {None, p["assignment_id"]}:
         raise ValueError("Canvas returned a different assignment")
+    if require_own_submission and (s.get("assignment_id") != p["assignment_id"] or
+            type(s.get("user_id")) is not int or s["user_id"] < 1 or
+            not isinstance(s.get("submission_comments"), list)):
+        raise ValueError("Canvas did not identify your own submission and comments")
     if submission_type:
         if a.get("locked_for_user") or a.get("published") is False or a.get("can_submit") is False:
             raise ValueError("Canvas reports that the assignment is not currently submittable")
@@ -391,17 +396,24 @@ class ActionStore:
 
     def _snapshot(self, canvas: Canvas, owner: str, p: dict) -> dict:
         kind = p["kind"]
+        if kind in module_progress.KINDS:
+            return module_progress.snapshot(canvas, p)
         if kind in student_actions.KINDS:
             return student_actions.snapshot(canvas, p)
-        if kind in {"submit_text", "submit_url", "submit_files", "submission_comment"} or (kind == "upload" and p["destination"] == "assignment"):
-            stype = {"submit_text": "online_text_entry", "submit_url": "online_url", "submit_files": "online_upload", "upload": "online_upload"}.get(kind)
-            target = _assignment(canvas, p, stype)
-            if kind == "upload":
+        if kind in {"submit_text", "submit_url", "submit_files", "submission_comment"} or (kind == "upload" and p["destination"] in {"assignment", "submission_comment"}):
+            is_comment = kind == "submission_comment" or (kind == "upload" and p["destination"] == "submission_comment")
+            stype = None if is_comment else {"submit_text": "online_text_entry", "submit_url": "online_url", "submit_files": "online_upload", "upload": "online_upload"}.get(kind)
+            target = _assignment(canvas, p, stype, require_own_submission=is_comment)
+            if kind == "upload" and not is_comment:
                 names = [p["filename"]]
             elif kind == "submit_files":
                 files = self._uploaded(canvas, owner, p)
                 target["files"] = files
                 names = [f["filename"] for f in files]
+            elif kind == "submission_comment":
+                if p.get("upload_action_ids"):
+                    target["files"] = self._uploaded(canvas, owner, p, destination="submission_comment", user_id=target["user_id"])
+                names = []
             else:
                 names = []
             extensions = [str(e).lower().lstrip(".") for e in target["allowed_extensions"]]
@@ -426,7 +438,7 @@ class ActionStore:
             return existing
         return {}
 
-    def _uploaded(self, canvas: Canvas, owner: str, p: dict) -> list[dict]:
+    def _uploaded(self, canvas: Canvas, owner: str, p: dict, *, destination: str = "assignment", user_id: int | None = None) -> list[dict]:
         ids = p["upload_action_ids"]
         if len(set(ids)) != len(ids):
             raise ValueError("Upload receipt IDs must be distinct")
@@ -437,8 +449,13 @@ class ActionStore:
                 if r["kind"] != "upload" or r["state"] != "succeeded":
                     raise ValueError("Each file must have a verified completed upload receipt")
                 target = r["review"]
-                if target.get("destination") != "assignment" or any(target.get(k) != p[k] for k in ("course_id", "assignment_id")):
-                    raise ValueError("Upload receipt belongs to another assignment")
+                if target.get("destination") != destination or any(target.get(k) != p[k] for k in ("course_id", "assignment_id")):
+                    raise ValueError("Upload receipt belongs to another assignment or upload context")
+                if user_id is not None and (target.get("target") or {}).get("user_id") != user_id:
+                    raise ValueError("Upload receipt belongs to another Canvas user")
+                result = r.get("result") or {}
+                if result.get("verified") is not True or type(result.get("id")) is not int or result["id"] < 1 or result.get("size") != target.get("bytes"):
+                    raise ValueError("Upload receipt does not confirm the expected file identity")
                 files.append({"id": r["result"]["id"], "filename": target["filename"],
                               "bytes": target["bytes"], "sha256": target["sha256"]})
         if len({f["id"] for f in files}) != len(files):
@@ -480,6 +497,11 @@ class ActionStore:
                 raise ValueError("intent_id must be 1..128 letters, digits, dots, underscores, colons or hyphens")
         parsed = ACTION_ADAPTER.validate_python(action)
         p = parsed.model_dump(mode="json")
+        # Preserve the original text-only comment fingerprint across upgrades.
+        # Adding an optional attachment field must not turn a retry into a new
+        # comment or invalidate an already-prepared text-only snapshot.
+        if p["kind"] == "submission_comment" and not p.get("upload_action_ids"):
+            p.pop("upload_action_ids", None)
         encoded = json.dumps(p, sort_keys=True, separators=(",", ":"))
         identity = self._identity(canvas, owner)
         fingerprint = hashlib.sha256((identity + "\0" + encoded).encode()).hexdigest()
@@ -495,7 +517,9 @@ class ActionStore:
                 "warning": "This key represents a distinct user-authorized action, not an automatic retry. If an earlier receipt is unknown or uncertain, inspect Canvas first and explicitly authorize the risk of repeating it."}
         if p["kind"] == "upload":
             raw = base64.b64decode(p["content_base64"], validate=True)
-            review.update({"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), "effect": "Upload file only; does not submit coursework"})
+            effect = ("Upload attachment only; does not send a submission comment or submit coursework"
+                      if p["destination"] == "submission_comment" else "Upload file only; does not submit coursework")
+            review.update({"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), "effect": effect})
         with self._atomic():
             existing, prior = self._existing_preparation(canvas, owner, identity, fingerprint, intent_id)
             if existing:
@@ -613,7 +637,7 @@ class ActionStore:
                 snapshot = self._snapshot(canvas, owner, p)
                 if snapshot != r["snapshot"]:
                     raise ValueError("Target changed after preparation; prepare a fresh review")
-                if p["kind"] == "submit_files":
+                if p["kind"] == "submit_files" or (p["kind"] == "submission_comment" and snapshot.get("files")):
                     self._verify_files(canvas, snapshot["files"])
                 authorize_write()
             except Exception:
@@ -647,6 +671,8 @@ class ActionStore:
         with tempfile.TemporaryDirectory(prefix="canvas-verify-") as directory:
             for index, expected in enumerate(files):
                 f = canvas.files.get(expected["id"])
+                if f.id != expected["id"]:
+                    raise ValueError("Canvas returned a different uploaded file")
                 if f.size != expected["bytes"]:
                     raise ValueError("Uploaded file size changed")
                 path = Path(directory) / str(index)
@@ -656,11 +682,18 @@ class ActionStore:
 
     def _perform(self, canvas: Canvas, p: dict, target: dict) -> dict:
         kind = p["kind"]
+        if kind in module_progress.KINDS:
+            return module_progress.perform(canvas, p, target)
         if kind in student_actions.KINDS:
             return student_actions.perform(canvas, p, target)
         if kind == "upload":
             raw = base64.b64decode(p["content_base64"], validate=True)
-            context = UploadContext.user() if p["destination"] == "user" else UploadContext.assignment_submission(p["course_id"], p["assignment_id"])
+            if p["destination"] == "user":
+                context = UploadContext.user()
+            elif p["destination"] == "submission_comment":
+                context = UploadContext.submission_comment(p["course_id"], p["assignment_id"])
+            else:
+                context = UploadContext.assignment_submission(p["course_id"], p["assignment_id"])
             with tempfile.TemporaryDirectory(prefix="canvas-upload-") as directory:
                 path = Path(directory) / p["filename"]
                 path.write_bytes(raw)
@@ -669,7 +702,10 @@ class ActionStore:
             if not uploaded.get("id"):
                 raise ValueError("Canvas did not return a file identity")
             self._verify_files(canvas, [{"id": uploaded["id"], "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}])
-            return {"id": uploaded["id"], "filename": uploaded.get("display_name"), "size": len(raw), "verified": True, "submitted": False}
+            result = {"id": uploaded["id"], "filename": uploaded.get("display_name"), "size": len(raw), "verified": True, "submitted": False}
+            if p["destination"] == "submission_comment":
+                result["comment_sent"] = False
+            return result
         if kind.startswith("submit_") or kind == "submission_comment":
             c, a = p["course_id"], p["assignment_id"]
             if kind == "submit_text":
@@ -679,14 +715,23 @@ class ActionStore:
             elif kind == "submit_files":
                 posted = dump(canvas.send(SubmitFileUpload(c, a, [f["id"] for f in target["files"]])))
             else:
-                posted = dump(canvas.submissions.add_comment(c, a, p["text"]))
+                posted = dump(canvas.submissions.add_comment(c, a, p["text"],
+                              attachment_file_ids=[f["id"] for f in target.get("files", [])]))
             result = dump(canvas.submissions.get(c, a))
             if result.get("assignment_id") != a or result.get("user_id") != target.get("user_id"):
                 raise ValueError("Submission identity changed")
             if kind == "submission_comment":
                 comments = result.get("submission_comments") or []
-                if not any(x.get("id") not in target["comment_ids"] and x.get("comment") == p["text"] for x in comments):
-                    raise ValueError("Comment not found on readback")
+                expected_files = sorted(f["id"] for f in target.get("files", []))
+                def matches(comment: dict) -> bool:
+                    return (type(comment.get("id")) is int and comment["id"] > 0 and
+                            comment["id"] not in target["comment_ids"] and
+                            comment.get("author_id") == target["user_id"] and comment.get("comment") == p["text"] and
+                            sorted(f.get("id") for f in comment.get("attachments") or []) == expected_files)
+                returned_ids = {x["id"] for x in posted.get("submission_comments") or [] if matches(x)}
+                confirmed = [x for x in comments if matches(x) and x["id"] in returned_ids]
+                if len(confirmed) != 1:
+                    raise ValueError("Exact new comment and attachments were not confirmed")
             else:
                 stype = {"submit_text": "online_text_entry", "submit_url": "online_url", "submit_files": "online_upload"}[kind]
                 if result.get("submission_type") != stype or result.get("workflow_state") not in {"submitted", "graded", "pending_review"} or not result.get("submitted_at"):

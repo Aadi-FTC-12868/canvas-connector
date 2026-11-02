@@ -62,7 +62,7 @@ def test_large_results_have_bound_owner_checked_complete_continuations():
 def test_tool_annotations_and_typed_action_schema():
     _, mcp, _ = server()
     tools = {t.name: t for t in mcp._tool_manager.list_tools()}
-    assert len(tools) == 41
+    assert len(tools) == 42
     assert tools["canvas_submit_assignment"].annotations.readOnlyHint is False
     assert tools["canvas_submit_assignment"].annotations.destructiveHint is True
     assert tools["canvas_prepare_action"].annotations.readOnlyHint is True

@@ -54,15 +54,15 @@ def bundle_contents() -> dict[str, bytes]:
     manifest = json.loads(allowed["packaging/mcpb/manifest.json"].read_text())
     project = tomllib.loads(result["pyproject.toml"].decode())
     manifest["version"] = project["project"]["version"]
-    if "uv" in project.get("tool", {}):
-        raise ValueError("Review existing tool.uv configuration before packaging")
     constraints = [line.strip() for line in result["requirements.lock"].decode().splitlines()
                    if line.strip() and not line.lstrip().startswith("#")]
     if any("==" not in item or any(c in item for c in "\r\n") for item in constraints):
         raise ValueError("Expected exact dependency pins")
-    uv_config = "\n[tool.uv]\nconstraint-dependencies = " + json.dumps(constraints) + "\n"
-    uv_config += '\n[tool.uv.sources]\ncanvas-py = { path = "packages/canvas-py" }\ncanvas-mcp-v2 = { path = "packages/canvas-mcp-v2" }\n'
-    result["pyproject.toml"] += uv_config.encode()
+    expected_uv = {"constraint-dependencies": constraints, "sources": {
+        "canvas-py": {"path": "packages/canvas-py"},
+        "canvas-mcp-v2": {"path": "packages/canvas-mcp-v2"}}}
+    if project.get("tool", {}).get("uv") != expected_uv:
+        raise ValueError("Root tool.uv must match the bundled local sources and requirements.lock pins")
     result["manifest.json"] = (json.dumps(manifest, indent=2, ensure_ascii=False) + "\n").encode()
     result["entrypoint.py"] = allowed["packaging/mcpb/entrypoint.py"].read_bytes()
     result["README-BUNDLE.md"] = NOTICE.encode()

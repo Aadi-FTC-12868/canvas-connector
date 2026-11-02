@@ -1,10 +1,14 @@
 {
   "name": "canvas-connector-personal",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Personal local Canvas navigation and specifically authorized student actions.",
-  "author": {"name": "Aadi Chandraya"},
+  "author": {
+    "name": "Aadi Chandraya"
+  },
   "license": "MIT",
   "skills": "./skills/",
   "mcpServers": "./mcp.codex.json",
-  "requires_local_executor": true
+  "requires_local_executor": true,
+  "homepage": "https://builtbyaadi.com/canvas-connector/",
+  "repository": "https://github.com/Aadi-FTC-12868/canvas-connector"
 }

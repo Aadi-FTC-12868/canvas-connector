@@ -9,6 +9,9 @@ are included. No public service or app-directory listing is claimed. See
 [validation](docs/VALIDATION.md) for what has actually been tested and
 [capabilities](docs/CAPABILITIES.md) for remaining Canvas app gaps.
 
+Source and issues: [Aadi-FTC-12868/canvas-connector](https://github.com/Aadi-FTC-12868/canvas-connector).
+Setup and downloads: [Built by Aadi](https://builtbyaadi.com/canvas-connector/).
+
 ## Run locally
 
 Requires Python 3.12 or later. From this repository:
@@ -38,6 +41,26 @@ Never place a token in a chat or public configuration.
 
 This JSON format applies to clients accepting `mcpServers`; Codex uses its own
 MCP configuration or `codex mcp add`. See the [client guide](docs/COMPATIBILITY.md).
+
+## Install from GitHub
+
+Install UV and your assistant's command-line app first. For Codex:
+
+```sh
+codex plugin marketplace add https://github.com/Aadi-FTC-12868/canvas-connector.git
+codex plugin add canvas-connector-personal@built-by-aadi
+```
+
+For Claude Code:
+
+```sh
+claude plugin marketplace add https://github.com/Aadi-FTC-12868/canvas-connector.git
+claude plugin install canvas-connector-personal@built-by-aadi
+```
+
+Then follow the setup skill for your own account. See the
+[client guide](docs/COMPATIBILITY.md) for secure configuration and desktop options.
+A plugin installation does not establish Canvas authorization.
 
 ## Install packages
 
@@ -75,7 +98,8 @@ The bundled Docker configurations bind to loopback for a TLS reverse proxy. Use
 SQLite for workers on one host, or PostgreSQL for separate replicas. Refresh
 coordination, request limits, continuations, action claims, and receipts share
 the database. The CLI supports up to eight workers; production capacity has not
-been benchmarked.
+been established. See the [synthetic measurements](docs/BENCHMARKS.md) for a
+reproducible starting point.
 
 ## Design
 

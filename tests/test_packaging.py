@@ -102,6 +102,44 @@ def test_plugin_archive_contains_both_catalogs_and_local_runtime(tmp_path):
         assert hashlib.sha256((directory / name).read_bytes()).hexdigest() == expected
 
 
+def test_repository_is_a_complete_root_plugin_with_both_catalogs():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    for path in ["plugin.json", ".codex-plugin/plugin.json", ".claude-plugin/plugin.json"]:
+        assert json.loads((ROOT / path).read_text())["version"] == project["project"]["version"]
+    for path in [".agents/plugins/marketplace.json", ".claude-plugin/marketplace.json"]:
+        catalog = json.loads((ROOT / path).read_text())
+        assert catalog["name"] == "built-by-aadi"
+        source = catalog["plugins"][0]["source"]
+        relative = source if isinstance(source, str) else source["path"]
+        assert relative == "./"
+        assert (ROOT / relative).resolve() == ROOT
+    for path, variable in [("mcp.json", "${PLUGIN_ROOT}"), ("mcp.codex.json", "${PLUGIN_ROOT}"),
+                           (".mcp.json", "${CLAUDE_PLUGIN_ROOT}")]:
+        server = json.loads((ROOT / path).read_text())["mcpServers"]["canvas"]
+        assert server["command"] == "uv"
+        assert server["args"] == ["run", "--python", "3.12", "--directory", variable,
+                                  "--no-dev", "packaging/plugin/entrypoint.py"]
+        assert (ROOT / server["args"][-1]).is_file()
+    assert (ROOT / "skills/setup/SKILL.md").read_bytes() == (ROOT / "packaging/plugin/setup-SKILL.md").read_bytes()
+    secret = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())["userConfig"]
+    assert secret["canvas_token"]["sensitive"] is True
+    assert secret["allow_writes"]["default"] is False
+
+
+def test_bundle_rejects_unreviewed_uv_dependency_sources(monkeypatch):
+    builder = load_file("mcpb_invalid_sources", ROOT / "scripts/build_mcpb.py")
+    original = builder.tomllib.loads
+
+    def changed_project(content):
+        project = original(content)
+        project["tool"]["uv"]["sources"]["canvas-py"] = {"path": "../unreviewed"}
+        return project
+
+    monkeypatch.setattr(builder.tomllib, "loads", changed_project)
+    with pytest.raises(ValueError, match="bundled local sources"):
+        builder.bundle_contents()
+
+
 def test_plugin_explicit_host_fields_never_mix_with_selected_private_file(monkeypatch, tmp_path):
     entry = load_file("plugin_entry_partial", ROOT / "packaging/plugin/entrypoint.py")
     private = tmp_path / "canvas.env"

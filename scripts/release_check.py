@@ -13,6 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
 ROOT_FILES = {"README.md", "AGENTS.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md", "pyproject.toml",
               ".gitignore", ".dockerignore", ".env.example", "Dockerfile", "compose.yaml", "compose.postgres.yaml", "requirements.lock", "requirements-runtime.lock"}
+PLUGIN_FILES = {"plugin.json", "mcp.json", "mcp.codex.json", ".mcp.json",
+                ".agents/plugins/marketplace.json", ".codex-plugin/plugin.json",
+                ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"}
 PATTERNS = [re.compile(r"/Users/"), re.compile(r"bmcss\.instructure\.com", re.I),
             re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")]
 
@@ -21,14 +24,16 @@ def source_files():
     for path in sorted(ROOT.rglob("*")):
         relative = path.relative_to(ROOT)
         if path.is_symlink():
-            if relative.parts[0] in {"src", "packages", "tests", "docs", "scripts", "skills", "packaging"}:
+            if relative.parts[0] in {"src", "packages", "tests", "docs", "scripts", "skills", "packaging",
+                                     ".agents", ".codex-plugin", ".claude-plugin"} or str(relative) in PLUGIN_FILES:
                 raise ValueError(f"Symlink not allowed: {relative}")
             continue
-        if not path.is_file() or any(p.startswith(".") and p not in {".github"} for p in relative.parts[:-1]):
+        if not path.is_file() or (str(relative) not in PLUGIN_FILES and
+                any(p.startswith(".") and p not in {".github"} for p in relative.parts[:-1])):
             continue
         if any(p in {"__pycache__", "node_modules", "dist", "build"} or p.endswith(".egg-info") for p in relative.parts):
             continue
-        allowed = str(relative) in ROOT_FILES
+        allowed = str(relative) in ROOT_FILES | PLUGIN_FILES
         if relative.parts[0] in {"src", "tests", "scripts", "docs", "skills", "packaging", ".github"}:
             allowed = path.suffix in {".py", ".md", ".json", ".html", ".css", ".js", ".yml", ".yaml"}
         if relative.parts[0] == "packages" and len(relative.parts) >= 3:

@@ -1,0 +1,16 @@
+{
+  "name": "built-by-aadi",
+  "owner": {
+    "name": "Aadi Chandraya"
+  },
+  "metadata": {
+    "description": "Personal local Canvas connector and assistant skill."
+  },
+  "plugins": [
+    {
+      "name": "canvas-connector-personal",
+      "description": "Personal local Canvas navigation and specifically authorized student actions.",
+      "source": "./"
+    }
+  ]
+}
