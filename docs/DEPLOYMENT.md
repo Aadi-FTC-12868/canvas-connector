@@ -1,6 +1,11 @@
 # Run the connector
 
-This release supports personal local stdio and an OAuth-protected hosted service. Hosted workers share encrypted records through SQLite on one host or PostgreSQL across hosts. Container files prepare it for deployment; they do not mean a public service has been deployed. See [VALIDATION.md](VALIDATION.md) for verified checks.
+The connector supports personal local stdio and an OAuth-protected institution
+service. The experimental Built by Aadi account mode has a separate
+[Cloudflare deployment plan](HOSTED-BUILTBYAADI.md). The institution instructions
+below use SQLite on one host or PostgreSQL across hosts; those databases are not
+the Cloudflare Container persistence design. Configuration files do not establish
+a deployed service. See [VALIDATION.md](VALIDATION.md) for completed checks.
 
 ## Install from source
 
@@ -22,12 +27,16 @@ canvas-connector stdio
 
 Reads are the default. `canvas-connector stdio --allow-writes` enables prepared actions for your personal account; the assistant must still act within your authorization. Configure the MCP client to launch the executable in the installed environment, with the private configuration path in its environment. See [COMPATIBILITY.md](COMPATIBILITY.md) for client choices.
 
-Manual Canvas tokens are for personal local use. They are not the hosted onboarding flow: Canvas explicitly requires multi-user applications to obtain user tokens through OAuth, and prohibits asking other users to generate and paste tokens into an application. [Canvas OAuth overview](https://developerdocs.instructure.com/services/canvas/oauth2/file.oauth)
+Canvas explicitly requires multi-user applications to obtain user tokens through
+Canvas OAuth and prohibits asking other users to generate and paste tokens into an
+application. Personal local setup and the experimental credential-broker code do
+not establish permission for public token-collection onboarding.
+[Canvas OAuth overview](https://developerdocs.instructure.com/services/canvas/oauth2/file.oauth)
 
 For the prepared Built by Aadi origin and pending-deployment reference files, see
 [canvas.builtbyaadi.com deployment plan](HOSTED-BUILTBYAADI.md).
 
-## Hosted prerequisites
+## Institution-mode prerequisites
 
 The operator needs a stable HTTPS origin, persistent storage, and a Canvas OAuth developer key enabled for each supported institution. A global developer key also requires institutions to enable it. A student's Canvas URL alone cannot grant a public application this capability. [Canvas developer keys](https://developerdocs.instructure.com/services/canvas/oauth2/file.developer_keys)
 
@@ -58,6 +67,7 @@ Only configured institutions are accepted. Hosted users select an institution an
 
 | Variable | Meaning |
 | --- | --- |
+| `CONNECTOR_AUTH_MODE` | `institution` (default) for this guide; `builtbyaadi` selects the separate Cloudflare beta account mode. |
 | `CONNECTOR_PUBLIC_URL` | Public HTTPS origin, such as `https://canvas.example.org`. Keep it stable because OAuth metadata and callback URLs depend on it. |
 | `CONNECTOR_DATABASE` | A writable local SQLite path, or a PostgreSQL URL (`postgresql://...`) with the `postgres` extra installed. Keep the PostgreSQL URL private; use TLS when the database is remote. |
 | `CONNECTOR_ENCRYPTION_KEY` | Persistent Fernet key for stored credentials and OAuth records. Generate with `canvas-connector keygen`; keep it secret and back it up separately from the database. |

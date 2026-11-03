@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import functools
 import anyio
+from contextvars import ContextVar
 from itertools import islice
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Iterable, Literal
 from urllib.parse import urlsplit
 
 from canvas_py import Canvas
@@ -22,7 +23,7 @@ from mcp.types import ToolAnnotations
 
 from .actions import ActionStore, ActionRequest, ACTION_KINDS, EXECUTE_ROUTES, PositiveId, Request
 from . import group_content, preferences, enrollments, bookmarks, what_if_grades, mastery_paths, group_memberships, feedback, appointments, self_profile, dashboard_cards, inbox_messages, group_files
-from .responses import ResponseStore, dump, envelope, external_link, failure, window
+from .responses import ResponseStore, SecretRedactor, dump, envelope, external_link, failure, window
 
 
 def _page(canvas: Canvas, request: Any, offset: int, limit: int, *, transform: Callable | None = None) -> dict:
@@ -54,7 +55,8 @@ def _file_metadata(canvas: Canvas, item: Any) -> dict:
 
 def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Callable[[], None],
                    owner: Callable[[], str] | None = None, store: ActionStore | None = None,
-                   responses: ResponseStore | None = None) -> ActionStore:
+                   responses: ResponseStore | None = None,
+                   secret_values: Callable[[], Iterable[str]] | None = None) -> ActionStore:
     """Register once on a fresh FastMCP instance. Provider must be request scoped.
 
     owner is the authenticated connector tenant ID, never a model-supplied argument.
@@ -63,19 +65,39 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
     store = store or ActionStore()
     owner = owner or (lambda: "local")
     responses = responses or ResponseStore()
+    response_secrets = ContextVar("canvas_response_secrets", default=())
 
     def tool(*, write: bool = False, destructive: bool = False):
         def decorate(fn):
             @functools.wraps(fn)
             async def guarded(*args, **kwargs):
+                # Capture once in the authenticated request context. Calling a
+                # credential callback never invokes the Canvas provider/network.
+                try:
+                    supplied = secret_values() if secret_values is not None else ()
+                    if isinstance(supplied, (str, bytes)):
+                        raise TypeError("Credential callback must return a collection")
+                    values = tuple(supplied)
+                    redactor = SecretRedactor(values)
+                except Exception:
+                    raise RuntimeError("Credential context is unavailable.") from None
+                context = response_secrets.set(values)
                 try:
                     tenant = owner()
                     return await anyio.to_thread.run_sync(
-                        lambda: responses.compact(fn(*args, **kwargs), tenant))
+                        lambda: responses.compact(redactor.redact(fn(*args, **kwargs)), tenant))
                 except CanvasError as error:
-                    return failure(error)
+                    return redactor.redact(failure(error))
                 except ValueError as error:
-                    return failure(error)
+                    return redactor.redact(failure(error))
+                except Exception as error:
+                    if redactor.text(str(error)) != str(error):
+                        # MCP may format unexpected exception messages itself.
+                        # Suppress the original exception chain in that case.
+                        raise RuntimeError("Connector request failed; protected error details were removed.") from None
+                    raise
+                finally:
+                    response_secrets.reset(context)
             mcp.tool(annotations=ToolAnnotations(readOnlyHint=not write,
                 destructiveHint=destructive, idempotentHint=not write, openWorldHint=True))(guarded)
             return guarded
@@ -85,7 +107,7 @@ def register_tools(mcp: Any, provider: Callable[[], Canvas], authorize_write: Ca
     def canvas_read_result(result_id: str, offset: int = 0, max_chars: int = 40000) -> dict[str, Any]:
         """Continue an oversized result using its exact next_read cursor. Join JSON-text windows in order; do not treat a partial window as complete."""
         provider()  # enforce current account authentication, including token revocation
-        return responses.read(owner(), result_id, offset, max_chars)
+        return responses.read(owner(), result_id, offset, max_chars, secret_values=response_secrets.get())
 
     @tool()
     def canvas_capabilities() -> dict[str, Any]:

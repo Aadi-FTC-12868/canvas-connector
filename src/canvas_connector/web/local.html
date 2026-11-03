@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Set up the open-source Canvas Connector on your own computer with a copyable prompt for your AI agent.">
+  <title>Set up Canvas locally — Built by Aadi</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='12' fill='%238b2942'/%3E%3Ctext x='12' y='35' fill='white' font-family='Arial' font-size='32'%3EC%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header><a class="brand" href="https://builtbyaadi.com">built by aadi</a><a href="./index.html#connect">All setup options</a></header>
+  <main id="main" class="local-page">
+    <section class="local-hero">
+      <p class="project">Canvas Connector / Local setup</p>
+      <h1>Keep Canvas<br>on your computer.</h1>
+      <p class="lead">Hand this prompt to an AI agent that can set up software on your computer. No Built by Aadi account needed.</p>
+      <p class="local-reason">We strongly recommend local setup if you prefer to keep your Canvas token on your own device. It avoids storing the token with the hosted beta. Your computer, assistant permissions, and configuration still need care.</p>
+    </section>
+    <section class="agent-setup" aria-labelledby="prompt-heading">
+      <div class="section-intro"><h2 id="prompt-heading">Let your agent <br>help with setup.</h2><p>Copy this into Codex, Claude Code, or another agent with access to your computer. It contains instructions, not credentials.</p></div>
+      <div class="prompt-panel">
+        <label for="setup-prompt">Local installation prompt</label>
+        <textarea id="setup-prompt" readonly spellcheck="false" rows="12">Set up the open-source Canvas Connector from https://github.com/Aadi-FTC-12868/canvas-connector for personal local use with my assistant.
+
+Read the repository's current README, AGENTS.md, compatibility guide, and setup skill before making changes. Choose the supported local setup for my assistant and operating system. Preserve my existing assistant configuration.
+
+Use my school's Canvas URL and my own personal access token. Have me enter the token privately through secure assistant settings or a private local credential file outside Git, never in chat, command arguments, logs, or screenshots. Explain how to create a token only if my school enables that option.
+
+Start with writes disabled. Install the required dependencies, start or reconnect the local connector, and verify the connected Canvas account with a read-only check before reporting success. Do not submit work, send messages, upload files, or change my Canvas account during setup. If a step requires my interaction or an unsupported host feature, explain exactly what remains.</textarea>
+        <button id="copy-setup-prompt" class="primary" type="button">Copy setup prompt</button>
+        <p id="prompt-copy-status" class="copy-status" role="status" aria-live="polite"></p>
+        <p class="field-note">Keep your real Canvas token out of the prompt. Your agent should guide private entry when it reaches that step.</p>
+      </div>
+    </section>
+    <section class="local-checklist" aria-labelledby="prepare-heading">
+      <h2 id="prepare-heading">Have your Canvas details ready.</h2>
+      <ol>
+        <li><h3>Find your school’s Canvas address.</h3><p>Open Canvas as usual and copy its HTTPS origin, such as <code>https://school.instructure.com</code>. Leave off the course path, query, and any sign-in link.</p></li>
+        <li><h3>Create a personal token, if your school allows it.</h3><p>In Canvas, open <strong>Account → Settings</strong>. Under <strong>Approved Integrations</strong>, look for <strong>New Access Token</strong>. Choose a purpose and an expiration you are comfortable with. If the option is missing or disabled, your school may restrict token creation; this setup cannot enable it.</p></li>
+        <li><h3>Enter it only in the private setup field.</h3><p>Canvas normally shows a newly generated token once. Treat it like a password. Follow your assistant’s secure settings or the local setup runner, and revoke the token in Canvas when you no longer use it.</p></li>
+      </ol>
+      <p class="field-note">Your local connector sends the token to your Canvas server to authenticate requests. The assistant receives the course information you request, rather than the token. Local installation does not bypass school permissions.</p>
+    </section>
+    <section class="local-downloads" aria-labelledby="manual-heading">
+      <div><h2 id="manual-heading">Prefer the steps yourself?</h2><p>Choose your assistant for desktop extensions, local plugins, or personal ChatGPT tunnel instructions. ChatGPT’s personal tunnel requires your computer to remain running and the appropriate OpenAI account access.</p></div>
+      <div class="local-actions"><a class="primary" href="./index.html#connect">Choose your assistant</a><a class="text-link" href="https://github.com/Aadi-FTC-12868/canvas-connector" target="_blank" rel="noopener noreferrer">Read the repository setup guide</a><a id="local-source-download" class="text-link" download hidden>Download the source ZIP</a></div>
+    </section>
+  </main>
+  <footer><span>Canvas Connector / Built by Aadi</span><span>Independent, open-source software. Not affiliated with Instructure.</span></footer>
+  <script src="./local.js" defer></script>
+</body>
+</html>

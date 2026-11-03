@@ -1,5 +1,39 @@
 # Validation record
 
+## Unreleased Built by Aadi account beta
+
+The account/Cloudflare branch is locally implemented and under review, separate
+from the published 0.12.0 downloads. Local Python verification passed 4,118 tests
+with 13 PostgreSQL skips; the optional tunnel facade passed 32 tests. The public
+MCP contract remains 87 tools, 93 action kinds and 34 execution groups.
+
+Eleven Worker tests include actual local workerd Durable Object persistence.
+Python storage tests exercise the production JavaScript engine over real HTTP,
+including chunked records, nested rollback, concurrent consumption, lease expiry
+and lost-response reconciliation. Seven independent account/storage flows used
+1,384 RPCs to check signup, verified email, signed-edge MCP, restart persistence,
+two-account isolation, disconnect and password-reset revocation. Only synthetic
+credentials, Canvas responses and email delivery were used.
+
+Account and redaction tests cover session/CSRF binding, pending signup expiry,
+credential replacement, revoked grants, known-token reflection, persisted result
+redaction and refusing unsafe legacy continuations before slicing. Browser
+verification passed signup, email verification, login, Canvas setup, OAuth allow
+and cancel redirects, PKCE exchange, an authenticated MCP read, read-only write
+denial and revocation. Both 390px and 1440px layouts had no overflow or console
+errors; the beta notice directly precedes setup and write access starts unchecked.
+All upstream responses and email delivery were synthetic. This is browser and
+protocol evidence, not a native ChatGPT/Claude connection or a public deployment.
+
+Public local-setup pages passed eight hosted-configuration cases, keyboard and
+clipboard fallback checks, and 390px/1440px layouts. The portfolio static build
+passed. A Worker dry run validates its bundle/configuration with Container rollout
+disabled; it is not a deployed Container test. No paid plan, DNS, Cloudflare
+resources, real email or real Canvas writes were created. Hosted setup remains
+disabled pending platform/email setup and review of the documented policy issue.
+
+## Published 0.12.0 record
+
 Development release 0.12.0, validated November 2, 2026 UTC.
 Historical installation, container and benchmark evidence below is identified by release; those checks are not implied to have been repeated for every new capability.
 These checks do not establish complete Canvas app parity or a production service.

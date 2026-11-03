@@ -1,70 +1,112 @@
-# Planned hosting at canvas.builtbyaadi.com
+# Built by Aadi hosted beta
 
-**Status: deployment intentionally pending.** No Canvas OAuth developer key is available yet, and no application host or DNS destination has been selected. These are planned settings and verification steps, not a live-service claim.
+**Status: implementation and local verification; public hosting is not enabled.**
+The public download page remains available separately. This design replaces the
+previous proposed Linux VM with a Cloudflare-only runtime and durable store.
 
-Canvas Connector remains independent, MIT-licensed software that anyone can run locally or self-host. Personal local `stdio` works without an OAuth developer key using the owner's private Canvas token; see [local setup](../README.md#run-locally). Hosted multi-user sign-in still requires an institution-enabled Canvas developer key and secret. Do not replace that flow with shared or user-pasted personal tokens.
+## Account and connection flow
 
-## Fixed public addresses
+1. Create a Built by Aadi account with email and password, then verify the email.
+   Existing accounts sign in. No Canvas password is requested.
+2. Immediately above Canvas setup, show the [beta notice](BETA-NOTICE.md) and a
+   prominent account-free [local setup](https://builtbyaadi.com/canvas-connector/local.html)
+   recommendation with a copyable agent prompt linking to this repository.
+3. Explain how to create a personal Canvas access token only when the school
+   enables that control. Enter the Canvas HTTPS origin and token into the
+   authenticated setup form. The server verifies the profile before saving it.
+4. GPT, Claude or another MCP client starts OAuth with Built by Aadi. Consent
+   shows the assistant, callback host, connected Canvas identity and requested
+   permissions. Writes require an unchecked-by-default opt-in.
+5. The assistant receives a separate connector token. The server resolves its
+   grant to the account's exact Canvas connection and credential version.
+   Replacing or disconnecting the credential revokes associated assistant grants.
 
-| Purpose | Planned value |
+This is Built by Aadi OAuth, not Canvas OAuth. Canvas's published documentation
+explicitly prohibits multi-user applications asking users to generate and paste
+personal tokens and requires obtaining Canvas tokens through its OAuth flow.
+The beta implementation, open-source license and risk notice do not resolve
+that policy issue or establish school approval.
+[Canvas OAuth documentation](https://developerdocs.instructure.com/services/canvas/oauth2/file.oauth)
+
+## Cloudflare architecture
+
+The static portfolio stays on `builtbyaadi.com`. A separate Worker on
+`canvas.builtbyaadi.com` forwards requests to a private Python Container managed
+by a Durable Object. The existing connector runs inside that Container.
+
+Account records, encrypted Canvas credentials, OAuth state, action receipts,
+continuations, revocations and leases use a private SQLite-backed Durable Object
+store. The Container accesses it through a fixed outbound handler; there is no
+public storage endpoint or embedded Cloudflare API token. Container disk is
+ephemeral and is not the source of truth.
+
+The store stages multi-operation transactions under a short fenced lease and
+commits them atomically. Nested rollback, compare-and-swap revisions, revocation
+tombstones and execution leases remain part of its contract. Large encrypted
+records are chunked below per-row limits. This initial backend serializes writes;
+production capacity must be measured rather than inferred from synthetic tests.
+See [Cloudflare runtime configuration](../cloudflare/README.md).
+
+The gateway signs the observed client IP, timestamp, method and request target
+with a separate private key. The Python server verifies that signature before
+using the IP for limits. User-supplied forwarding headers cannot select an
+identity. Gateway metadata never substitutes for a browser session or MCP grant.
+
+The token is stored encrypted in Built by Aadi's Cloudflare infrastructure and
+sent to the selected Canvas server to authenticate requests. It is not supplied
+to GPT or Claude. Requested Canvas content is returned to the assistant. Do not
+promise that the token literally never leaves Cloudflare or that encryption makes
+application compromise impossible.
+
+## Deployment configuration
+
+| Setting | Value or source |
 | --- | --- |
 | Public origin | `https://canvas.builtbyaadi.com` |
-| Advertised OAuth issuer | `https://canvas.builtbyaadi.com/` |
+| Advertised issuer | `https://canvas.builtbyaadi.com/` |
 | MCP endpoint | `https://canvas.builtbyaadi.com/mcp` |
-| Canvas developer-key redirect URI | `https://canvas.builtbyaadi.com/canvas/callback` |
-| Authorization-server metadata | `https://canvas.builtbyaadi.com/.well-known/oauth-authorization-server` |
-| Protected-resource metadata | `https://canvas.builtbyaadi.com/.well-known/oauth-protected-resource/mcp` |
+| `CONNECTOR_AUTH_MODE` | `builtbyaadi` |
+| `CONNECTOR_DATABASE` | `cloudflare://store` |
+| `CONNECTOR_ENCRYPTION_KEY` | Separate persistent Cloudflare secret; generated privately |
+| `CONNECTOR_EDGE_SECRET` | Independent random gateway secret, at least 32 characters |
+| `CONNECTOR_ACCOUNT_MAIL` | `cloudflare` only when the private email binding is configured |
+| `HOSTED_ENABLED` | Disabled until deployment and access checks pass |
+| `MAIL_ENABLED` | Disabled until sender/domain onboarding and delivery checks pass |
 
-The Canvas redirect URI is separate from each MCP client's registered redirect URI. Keep client redirects exact; follow [client compatibility](COMPATIBILITY.md).
+The institution configuration file is not used in this mode. The existing
+institution OAuth mode remains available separately through
+[DEPLOYMENT.md](DEPLOYMENT.md); its Linux/Caddy/Compose templates are not this
+Cloudflare deployment.
 
-## Host and private configuration
+The Cloudflare Email Sending binding sends fixed verification and recovery
+messages from the configured sender. Signup and email recovery fail closed
+without delivery configuration. Real delivery must be verified separately from
+synthetic mailer tests. No verification codes, reset codes or tokens belong in
+logs, URLs, source files or public browser responses.
 
-The existing Built by Aadi website is static Cloudflare hosting. It can link to the connector but does not run this Python MCP/OAuth service. Select a future VM or container host with persistent storage, then place a TLS reverse proxy in front of the application. Keep the static website separate.
+## Remaining launch work
 
-The prepared Linux VM reference consists of an [environment template](../packaging/hosted/builtbyaadi.env.example), [systemd service](../packaging/hosted/canvas-connector.service), and [Caddy configuration](../packaging/hosted/builtbyaadi.Caddyfile). It runs two workers as `canvas-connector` from `/opt/canvas-connector/.venv`, listens on `127.0.0.1:8000`, and uses persistent local SQLite storage. These templates do not select or provision a host.
+The connected Cloudflare account currently reports that Containers requires a
+Workers Paid plan. No plan upgrade, new Container deployment or public token
+collection was performed. Deploying also requires secret installation, email
+sender/domain setup and review of the unresolved Canvas policy issue.
 
-Copy the environment template to `/etc/canvas-connector/operator.env`, as required by the service, and store the institution JSON alongside it. Both stay outside the checkout with restricted permissions. The JSON schema is in [DEPLOYMENT.md](DEPLOYMENT.md#hosted-prerequisites).
+Before enabling the public flow, verify the actual deployed service: distinct
+accounts and credentials, restart persistence, verified-email delivery, password
+recovery, token replacement, disconnect, OAuth refresh/revocation, and account
+deletion. Run real assistant sign-ins separately; a health response or protocol
+test does not establish a successful ChatGPT or Claude connection.
 
-| Configuration | Planned value or source |
-| --- | --- |
-| `CONNECTOR_PUBLIC_URL` | `https://canvas.builtbyaadi.com` |
-| `CONNECTOR_INSTITUTIONS_FILE` in the operator environment | `/etc/canvas-connector/institutions.json` |
-| `CONNECTOR_DATABASE` for the Linux reference | `/var/lib/canvas-connector/connector.sqlite3` |
-| `CONNECTOR_ENCRYPTION_KEY` | Persistent private output of `canvas-connector keygen`; never commit it |
-| `CONNECTOR_TRUSTED_PROXIES` for same-host Caddy | `127.0.0.1,::1`; verify the actual connecting peers |
+Only then publish reviewed hosted configuration. `scripts/export_website.py`
+preserves an existing validated hosting choice, accepts `--hosted-config` for an
+explicit public configuration file, and supports `--disable-hosted`. It rejects
+unknown fields and credential-bearing endpoint URLs. Never pass a secrets file.
 
-The institution file must contain the real Canvas origin, display name, developer-key ID, and secret. Enable only the required [Canvas scopes](CANVAS-SCOPES.md). Restrict credential-file access to the operator and service account. Keep secrets and database backups outside Git; back up the encryption key separately.
+## Sources
 
-[compose.yaml](../compose.yaml) is a container alternative: it publishes the same loopback port, stores SQLite at `/data/connector.sqlite3` in `connector-data`, and mounts the institution file at `/run/secrets/institutions.json`. It needs a separate TLS proxy. [compose.postgres.yaml](../compose.postgres.yaml) supports a separately managed database/multiple hosts.
-
-## Eventual deployment and verification
-
-1. Obtain the institution-enabled developer key with the exact callback above; select a host and persistent storage. For the Linux reference, install Python 3.12, Caddy, and the repository dependencies into `/opt/canvas-connector/.venv`. Create the `canvas-connector` service account and private configuration files; fill the blank encryption key.
-2. Once the host, credentials, and DNS destination are ready, install the service as `/etc/systemd/system/canvas-connector.service` and merge the supplied site block into `/etc/caddy/Caddyfile`. Validate and start:
-
-   ```sh
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now canvas-connector
-   sudo caddy validate --config /etc/caddy/Caddyfile
-   sudo systemctl enable --now caddy
-   sudo systemctl reload caddy
-   ```
-
-   For the container alternative, use `docker compose --env-file /etc/canvas-connector/operator.env up --build -d` instead of the Python systemd service.
-3. Confirm public TLS and proxy routing. Forward the entire origin, including `/mcp`, `/authorize`, `/token`, `/register`, `/revoke`, `/connect`, `/canvas/callback`, and `/.well-known/*`. Preserve `Host: canvas.builtbyaadi.com` and restrict backend access to the proxy.
-4. After deployment, probe the public origin:
-
-   ```sh
-   curl --fail-with-body https://canvas.builtbyaadi.com/health
-   curl --fail-with-body https://canvas.builtbyaadi.com/connection.json
-   curl --fail-with-body https://canvas.builtbyaadi.com/.well-known/oauth-authorization-server
-   curl --fail-with-body https://canvas.builtbyaadi.com/.well-known/oauth-protected-resource/mcp
-   curl --include https://canvas.builtbyaadi.com/mcp
-   ```
-
-   Expect health `status: ok` with `canvas_authenticated: false`; connection endpoint and metadata resource must equal the planned MCP URL, and the advertised issuer must equal `https://canvas.builtbyaadi.com/` (including its trailing slash). Unauthenticated `/mcp` must return HTTP 401 with a `WWW-Authenticate` resource-metadata link. A health response does not prove Canvas sign-in.
-5. Complete real OAuth/MCP connections using two distinct test users. Verify correct account identity, read-only denial of writes, separate account data/receipts, token revocation, restart persistence, and one explicitly authorized write plus independent readback in a test course. Run the intended clients' actual sign-in flows and record results in [VALIDATION.md](VALIDATION.md).
-
-The origin configuration, metadata and unauthenticated 401 behavior were checked in process with synthetic credentials. Caddy and systemd have not been run on a target host. Caddy preserves the public Host and manages HTTPS when DNS and the host are ready; see its [reverse-proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) and [automatic HTTPS](https://caddyserver.com/docs/automatic-https) documentation.
-
-DNS changes, host provisioning, secret installation, and production deployment remain pending. Publish a working hosted-install link only after these checks pass.
+- [Cloudflare Containers](https://developers.cloudflare.com/containers/)
+- [Container storage lifetime](https://developers.cloudflare.com/containers/faq/)
+- [Private Worker binding access](https://developers.cloudflare.com/containers/configuration/workers-connections/)
+- [Durable Object storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
+- [Email Sending binding](https://developers.cloudflare.com/email-service/api/send-emails/workers-api/)
+- [OpenAI connector authentication](https://developers.openai.com/plugins/build/auth)

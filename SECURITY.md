@@ -1,11 +1,11 @@
 # Security and privacy
 
-Canvas Connector handles student records and credentials. Its security boundary is the authenticated account, not a course ID supplied by a model. Hosted access uses separate MCP and Canvas OAuth grants; local personal use can use a private Canvas token. See [deployment](docs/DEPLOYMENT.md) and [validation](docs/VALIDATION.md) for configuration and completed tests.
+Canvas Connector handles student records and credentials. Its security boundary is the authenticated account, not a course ID supplied by a model. Institution hosting uses separate MCP and Canvas OAuth grants. Experimental Built by Aadi hosting uses a verified account and an encrypted per-user Canvas credential vault; local personal use can use a private Canvas token. See [deployment](docs/DEPLOYMENT.md), the [Cloudflare plan](docs/HOSTED-BUILTBYAADI.md), and [validation](docs/VALIDATION.md) for configuration and completed tests. A beta notice is not a security guarantee or a waiver of non-waivable obligations.
 
 ## Implemented controls
 
 - Each hosted request resolves its Canvas account from a verified MCP bearer grant. Tool arguments cannot provide an alternative token or institution.
-- Institutions are configured by the operator. Hosted egress requires public HTTPS destinations on port 443 and validates DNS results at connection time, rejecting private and mixed public/private address sets. The original hostname remains the TLS identity.
+- Institution-mode origins are configured by the operator. Beta account connections bind a user-selected Canvas origin to a verified profile and immutable credential version. Hosted Canvas egress requires public HTTPS destinations on port 443 and validates DNS results at connection time, rejecting private and mixed public/private address sets. The original hostname remains the TLS identity.
 - MCP authorization uses PKCE, registered redirect checks, browser-bound consent state, expiring single-use codes, rotating refresh tokens, and revocation. Detected refresh-token reuse revokes the grant family. Upstream Canvas tokens are kept server-side.
 - The SQLite and PostgreSQL stores encrypt record payloads with a separately supplied key; opaque lookup keys are hashed. Possession of the running process and its encryption key still permits access to its credentials.
 - Request sizes, concurrent requests, authorization storage, and action storage are bounded. The shipped CLI disables request access logs so OAuth codes do not enter ordinary access-log lines.
@@ -16,6 +16,16 @@ These controls are not a claim of an independent security audit, complete threat
 ## Operator responsibilities
 
 Keep institution secrets, the encryption key, backups, the database, and private environment files outside source control. Protect the public origin with HTTPS and configure the reverse proxy to avoid logging tokens, codes, signed download links, or course payloads. Keep the backend port private. An institution administrator controls whether its Canvas developer key and API scopes are available.
+
+Built by Aadi's Cloudflare mode must persist accounts, encrypted Canvas credentials,
+OAuth records, receipts and revocation state in durable storage, never Container
+disk. The runtime sends a Canvas token to its validated Canvas server to authenticate
+requests; it must not return that token to GPT, Claude, setup-page responses or logs.
+Cloudflare encryption does not protect against compromise of the running application
+and its encryption key. Local installation reduces the need to trust this hosted
+credential store but still requires secure devices and careful assistant permissions.
+The beta mode also has an unresolved Canvas API policy constraint on collecting
+manually generated tokens; see [the hosting plan](docs/HOSTED-BUILTBYAADI.md).
 
 Use a shared SQLite database only on one host with local disk, or PostgreSQL for separate hosts. Workers coordinate token refresh, revocation, rate limits, continuations, and execution through the store. Revocation tombstones prevent stale workers from restoring revoked records. Renewable execution leases fence stale workers; a lost lease produces an uncertain outcome instead of replay. Multi-process correctness is tested; production capacity and a real multi-host deployment remain unverified. Prepared payloads expire after 10 minutes; encrypted receipts, including reviewed text and target information, remain for up to seven days. Local stdio actions have no durable receipt store. Follow the public-deployment checks in [DEPLOYMENT.md](docs/DEPLOYMENT.md).
 

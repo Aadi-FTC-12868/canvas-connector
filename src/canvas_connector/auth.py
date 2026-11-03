@@ -1,7 +1,7 @@
-"""Two-layer OAuth: MCP client -> connector -> institution Canvas OAuth.
+"""MCP OAuth and the institution-authorized Canvas OAuth provider.
 
-The public service never asks students for manually generated Canvas tokens.
-Institutions must provision a Canvas developer key for /canvas/callback first.
+This default provider uses an institution developer key for /canvas/callback.
+The separate account broker reuses MCP OAuth through explicit credential hooks.
 SDK handlers validate MCP PKCE/redirects; this provider adds one-use durable state,
 per-grant credentials, expiry, refresh rotation and revocation.
 """
@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from contextlib import suppress
 from html import escape
 import hmac
+import ipaddress
+import re
 import secrets
 import time
 from pathlib import Path
@@ -83,11 +85,48 @@ def _redirect(url: str, values: dict[str, str | None]) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
 
 
-def _headers() -> dict[str, str]:
+def _form_origin(target: str) -> str:
+    """Canonical CSP source from a prevalidated OAuth destination.
+
+    Never concatenate a client-supplied URL into a response header. Paths,
+    queries and fragments are not CSP origins; control characters and source
+    expression punctuation must not become new policy directives.
+    """
+    if not isinstance(target, str) or any(ord(char) <= 32 or ord(char) == 127 for char in target):
+        raise ValueError("Invalid form redirect destination")
+    try:
+        parsed = urlsplit(target)
+        hostname, port = parsed.hostname, parsed.port
+        if not hostname or parsed.username is not None or parsed.password is not None or parsed.fragment:
+            raise ValueError("Invalid form redirect destination")
+        loopback = parsed.scheme == "http" and hostname in {"localhost", "127.0.0.1", "::1"}
+        if parsed.scheme != "https" and not loopback:
+            raise ValueError("Invalid form redirect destination")
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError:
+            host = hostname.encode("idna").decode("ascii").lower()
+            if not re.fullmatch(r"[a-z0-9.-]+", host):
+                raise ValueError("Invalid form redirect destination")
+        else:
+            host = f"[{address.compressed}]" if address.version == 6 else address.compressed
+        if port is not None and not 1 <= port <= 65535:
+            raise ValueError("Invalid form redirect destination")
+        suffix = f":{port}" if port is not None and port != (443 if parsed.scheme == "https" else 80) else ""
+        return f"{parsed.scheme}://{host}{suffix}"
+    except (ValueError, UnicodeError):
+        raise ValueError("Invalid form redirect destination") from None
+
+
+def _headers(*, form_redirects: tuple[str, ...] = ()) -> dict[str, str]:
+    form_sources = " ".join(["'self'", *sorted({_form_origin(target) for target in form_redirects})])
     return {"Cache-Control": "no-store", "Pragma": "no-cache",
-            "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff",
+            # no-referrer turns same-origin HTML form navigation Origin into
+            # "null" in browsers, defeating our strict CSRF origin validation.
+            # same-origin keeps that Origin while omitting cross-origin Referer.
+            "Referrer-Policy": "same-origin", "X-Content-Type-Options": "nosniff",
             "X-Frame-Options": "DENY",
-            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"}
+            "Content-Security-Policy": f"default-src 'none'; style-src 'unsafe-inline'; form-action {form_sources}; frame-ancestors 'none'; base-uri 'none'"}
 
 
 class CanvasOAuthProvider:
@@ -95,7 +134,7 @@ class CanvasOAuthProvider:
                  encryption_key: str | None = None, institutions: list[Institution],
                  allow_local_http: bool = False,
                  http_client_factory: Callable[[], httpx.Client] = secure_http_client,
-                 store: Any = None):
+                 store: Any = None, credential_mode: str = "institution"):
         parsed = urlsplit(issuer_url)
         local = allow_local_http and parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
         if (parsed.scheme != "https" and not local) or not parsed.hostname or parsed.path not in ("", "/") or parsed.query or parsed.fragment or parsed.username or parsed.password:
@@ -105,8 +144,13 @@ class CanvasOAuthProvider:
         self.callback_url = self.issuer_url + "/canvas/callback"
         self.secure_cookie = not local
         self.cookie_name = COOKIE if self.secure_cookie else "canvas-oauth-dev"
-        if not institutions or len({x.origin for x in institutions}) != len(institutions):
+        if credential_mode not in {"institution", "personal"}:
+            raise ValueError("Unknown hosted credential mode")
+        if (credential_mode == "institution" and not institutions) or len({x.origin for x in institutions}) != len(institutions):
             raise ValueError("Configure at least one institution with a unique origin")
+        if credential_mode == "personal" and type(self) is CanvasOAuthProvider:
+            raise ValueError("Personal credential mode requires the account broker")
+        self.credential_mode = credential_mode
         self.institutions = {x.origin: x for x in institutions}
         if store is None and (database_path is None or encryption_key is None):
             raise ValueError("Provide an encrypted storage backend or database path and key")
@@ -219,7 +263,10 @@ class CanvasOAuthProvider:
 <p>Read access includes your courses, assignments, grades, files, discussions, and messages available through Canvas.</p>{write}
 <button type="submit">Continue to Canvas</button><button type="submit" name="deny" value="yes">Cancel</button></form>
 <p><small>Connections expire after 30 days. Disconnect in your AI app or revoke the app in Canvas to stop access. Your institution controls the available permissions.</small></p></html>'''
-        response = HTMLResponse(body, headers=_headers())
+        # Chromium applies form-action to redirect destinations as well as the
+        # same-origin POST. Permit only this flow's configured destinations.
+        response = HTMLResponse(body, headers=_headers(form_redirects=(
+            *self.institutions.keys(), params["redirect_uri"])))
         response.set_cookie(self.cookie_name, csrf, max_age=600, httponly=True, secure=self.secure_cookie, samesite="lax", path="/")
         return response
 
@@ -325,16 +372,20 @@ class CanvasOAuthProvider:
     @_offload_storage
     def load_authorization_code(self, client: OAuthClientInformationFull, authorization_code: str):
         data = self.store.get("code", authorization_code)
-        if not data or data["client_id"] != client.client_id or not self.store.get("grant", data["grant_id"]):
+        if not data or data["client_id"] != client.client_id or not self._grant_active(self.store.get("grant", data["grant_id"])):
             return None
         return GrantAuthorizationCode.model_validate(data)
+
+    def _grant_active(self, grant: dict | None) -> bool:
+        """Credential-provider hook, called inside token/storage transactions."""
+        return bool(grant and grant.get("institution") in self.institutions)
 
     def _issue(self, *, grant_id: str, client_id: str, scopes: list[str]) -> OAuthToken:
         # Grant validation and both token rows commit together. A concurrent
         # revocation can happen before or after this transaction, never between.
         with self.store.transaction():
             grant = self.store.get("grant", grant_id)
-            if not grant or grant["client_id"] != client_id or set(scopes) - set(grant["scopes"]):
+            if not self._grant_active(grant) or grant["client_id"] != client_id or set(scopes) - set(grant["scopes"]):
                 raise TokenError("invalid_grant", "Grant is no longer valid")
             access_key, refresh_key = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
             expires = min(int(time.time()) + ACCESS_SECONDS, int(grant["expires"]))
@@ -365,7 +416,7 @@ class CanvasOAuthProvider:
                 self.store.revoke_owner(spent["grant_id"])
                 return None
             data = self.store.get("refresh", refresh_token)
-            if not data or data["client_id"] != client.client_id or not self.store.get("grant", data["grant_id"]):
+            if not data or data["client_id"] != client.client_id or not self._grant_active(self.store.get("grant", data["grant_id"])):
                 return None
             return GrantRefreshToken.model_validate(data)
 
@@ -401,9 +452,8 @@ class CanvasOAuthProvider:
             if not data or data["resource"] != self.resource_url:
                 return None
             grant = self.store.get("grant", data["grant_id"])
-            if (not grant or grant["client_id"] != data["client_id"]
-                    or set(data["scopes"]) - set(grant["scopes"])
-                    or grant["institution"] not in self.institutions):
+            if (not self._grant_active(grant) or grant["client_id"] != data["client_id"]
+                    or set(data["scopes"]) - set(grant["scopes"])):
                 return None
             return GrantAccessToken.model_validate(data)
 

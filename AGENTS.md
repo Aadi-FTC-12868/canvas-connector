@@ -11,9 +11,14 @@ the MCP contract. Test writes with synthetic fixtures, never real coursework.
 For each release, match `packaging/release.json` to the root version and advance
 its even UTC `source_date_epoch`; bump changed local package versions and pins.
 
-Hosted mode requires institution-authorized Canvas OAuth. Personal tokens are
-for local single-user stdio only. A request's authenticated grant selects its
-Canvas client; model parameters must never select another user's credentials.
+Institution mode uses institution-authorized Canvas OAuth. The explicitly
+requested Built by Aadi beta uses verified email/password accounts and an
+encrypted per-account Canvas credential vault in Cloudflare. Keep these modes
+distinct. Canvas's published policy disallows collecting manually generated
+tokens in multi-user applications; document that unresolved launch constraint.
+A request's authenticated grant selects its Canvas client; model parameters
+must never select another user's credentials. Never claim a beta disclaimer
+removes legal duties or makes a hosted token flow institution-approved.
 
 Keep structured responses bounded, preserve access/completeness/freshness,
 annotate mutations accurately, and never treat a failed read as an empty result.

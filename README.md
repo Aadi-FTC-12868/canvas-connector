@@ -97,16 +97,25 @@ python scripts/build_plugins.py
 
 ## Host for multiple users
 
-The server uses two separate OAuth flows: the assistant authenticates to this
-connector, and each student authorizes Canvas through their school's login.
-Canvas credentials are encrypted in persistent storage; assistant tokens are
-separate, revocable, scoped, and never forwarded to Canvas.
+The server authenticates assistants with its own OAuth grants. Canvas credentials
+are encrypted in persistent storage; assistant tokens are separate, revocable,
+scoped, and never forwarded to Canvas. Two explicitly distinct hosting modes exist.
 
-You need a public HTTPS origin and a Canvas OAuth developer key enabled by each
-supported institution. Asking other users for personal tokens is not the hosted
-onboarding flow. Follow [deployment](docs/DEPLOYMENT.md), then connect the HTTPS
+**Institution mode** uses a public HTTPS origin and a Canvas OAuth developer key
+enabled by each supported institution. Students authorize through their school's
+Canvas login. Follow [deployment](docs/DEPLOYMENT.md), then connect the HTTPS
 `/mcp` endpoint using the host app's custom connector setup. App directories and
 one-click install URLs require their own publication processes.
+
+**Built by Aadi beta mode** adds verified email/password accounts and a private
+per-user Canvas URL/token setup, with a separate assistant consent step. Its
+production configuration requires Cloudflare Containers and durable storage;
+signup is unavailable without verification-email delivery. This mode is under
+development, not a live public service. Canvas's published policy prohibits
+multi-user applications collecting manually generated tokens; Built by Aadi
+OAuth and a beta notice do not resolve that upstream policy issue. See the
+[hosting plan and launch constraints](docs/HOSTED-BUILTBYAADI.md) and
+[Canvas policy documentation](https://developerdocs.instructure.com/services/canvas/oauth2/file.oauth).
 
 ```sh
 canvas-connector keygen
