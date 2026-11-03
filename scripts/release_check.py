@@ -19,6 +19,9 @@ PLUGIN_FILES = {"plugin.json", "mcp.json", "mcp.codex.json", ".mcp.json",
                 ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"}
 HOSTED_FILES = {"packaging/hosted/builtbyaadi.env.example",
                 "packaging/hosted/builtbyaadi.Caddyfile", "packaging/hosted/canvas-connector.service"}
+CLOUDFLARE_FILES = {"cloudflare/package.json", "cloudflare/package-lock.json",
+                    "cloudflare/tsconfig.json", "cloudflare/wrangler.jsonc",
+                    "cloudflare/README.md", "cloudflare/vitest.config.ts"}
 PATTERNS = [re.compile(r"/Users/"), re.compile(r"bmcss\.instructure\.com", re.IGNORECASE),
             re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")]
 
@@ -59,7 +62,7 @@ def source_files():
             continue
         if path.is_symlink():
             if relative.parts[0] in {"src", "packages", "tests", "docs", "scripts", "skills", "packaging",
-                                     ".agents", ".codex-plugin", ".claude-plugin"} or str(relative) in PLUGIN_FILES:
+                                     ".agents", ".codex-plugin", ".claude-plugin", "cloudflare"} or str(relative) in PLUGIN_FILES:
                 raise ValueError(f"Symlink not allowed: {relative}")
             continue
         if not path.is_file() or (str(relative) not in PLUGIN_FILES and
@@ -67,12 +70,14 @@ def source_files():
             continue
         if any(p in {"__pycache__", "node_modules", "dist", "build"} or p.endswith(".egg-info") for p in relative.parts):
             continue
-        allowed = str(relative) in ROOT_FILES | PLUGIN_FILES | HOSTED_FILES
+        allowed = str(relative) in ROOT_FILES | PLUGIN_FILES | HOSTED_FILES | CLOUDFLARE_FILES
         if relative.parts[0] in {"src", "tests", "scripts", "docs", "skills", "packaging", ".github"}:
             allowed = allowed or path.suffix in {".py", ".md", ".json", ".html", ".css", ".js", ".yml", ".yaml"}
         if relative.parts[0] == "packages" and len(relative.parts) >= 3:
             allowed = (len(relative.parts) == 3 and path.name in {"pyproject.toml", "README.md", "uv.lock"}) or (
                 relative.parts[2] in {"src", "tests"} and path.suffix == ".py")
+        if relative.parts[0] == "cloudflare" and len(relative.parts) >= 3:
+            allowed = relative.parts[1] in {"src", "test", "tests"} and path.suffix in {".ts", ".js", ".mjs"}
         if allowed:
             yield path
 

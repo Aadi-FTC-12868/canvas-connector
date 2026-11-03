@@ -302,6 +302,11 @@ class Store:
 
 def open_store(path: str | Path, encryption_key: str | bytes, **options):
     """Select the durable backend without exposing its DSN in diagnostics."""
+    if str(path).startswith("cloudflare:"):
+        if str(path) != "cloudflare://store":
+            raise ValueError("Cloudflare storage uses its fixed private binding")
+        from .cloudflare_store import CloudflareStore
+        return CloudflareStore(encryption_key, **options)
     if str(path).startswith(("postgres://", "postgresql://")):
         from .postgres import PostgresStore
         return PostgresStore(str(path), encryption_key, **options)

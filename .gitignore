@@ -14,4 +14,8 @@ institutions.json
 secrets/
 dist/
 build/
+node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*
 .DS_Store

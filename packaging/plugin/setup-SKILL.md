@@ -5,9 +5,20 @@ description: Set up the personal local Canvas plugin without exposing credential
 
 # Set up personal Canvas access
 
-This plugin runs on the user's computer for their own account. It is not public
-hosted onboarding. Institution restrictions still apply. Use the hosted OAuth
-connection for a supported institutional deployment.
+This plugin runs on the user's computer for their own account. It is separate
+from Built by Aadi account creation and hosted onboarding. Institution
+restrictions still apply. Use the current repository compatibility guide to
+choose the supported local route for the user's assistant and operating system.
+
+The account-free local guide and copyable agent prompt are at
+https://builtbyaadi.com/canvas-connector/local.html. Local setup keeps the token
+on the user's computer rather than in the hosted service, but security still
+depends on their device and configuration. Do not promise absolute security.
+
+If the user needs a token, explain Canvas Account → Settings → Approved
+Integrations → New Access Token. This option exists only when the school enables
+it; missing or disabled controls cannot be enabled by this connector. Have the
+user choose an appropriate purpose and expiration and enter the token privately.
 
 The plugin requires UV on PATH. The first launch obtains Python 3.12 and installs
 the bundled project's pinned dependencies. Explain missing runtime or launch

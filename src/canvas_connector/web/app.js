@@ -12,6 +12,23 @@ const pluginCommands = {
   code: [`claude plugin marketplace add ${repository}.git`, 'claude plugin install canvas-connector-personal@built-by-aadi']
 };
 let downloads = {desktop:null, plugin:null, source:null};
+let hostedMode = 'institution';
+function hostedEndpoint(value) {
+  if(typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const url = new URL(value);
+    if(url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/mcp') return null;
+    return url;
+  } catch {return null;}
+}
+function clientSteps(client) {
+  if(hostedMode !== 'builtbyaadi') return clients[client].steps;
+  const steps = [...clients[client].steps];
+  if(client === 'chatgpt' || client === 'claude') steps[2] = 'Sign in to Built by Aadi, connect your Canvas account if needed, and review the access requested by your assistant.';
+  if(client === 'codex') steps[2] = 'Review your Built by Aadi connection, then ask for your Canvas dashboard to verify the account.';
+  if(client === 'code') steps[1] = 'Run /mcp in Claude Code, sign in to Built by Aadi, and review the requested Canvas access.';
+  return steps;
+}
 function showDownloads(client) {
   document.querySelector('#tunnel-install').hidden = client !== 'chatgpt';
   document.querySelector('#download-tunnel-source').hidden = !downloads.source;
@@ -46,7 +63,7 @@ function choose(button) {
   document.querySelector('#guide-title').textContent = `Connect in ${entry.name}`;
   document.querySelector('#guide-description').textContent = entry.description;
   const list = document.querySelector('#steps'); list.replaceChildren();
-  entry.steps.forEach(text => { const li = document.createElement('li'); li.textContent = text; list.append(li); });
+  clientSteps(button.dataset.client).forEach(text => { const li = document.createElement('li'); li.textContent = text; list.append(li); });
   const link = document.querySelector('#client-link'); link.href = entry.url; link.textContent = `Open ${entry.name} setup guide`;
   document.querySelector('#local-note').textContent = entry.local;
   showDownloads(button.dataset.client);
@@ -91,5 +108,27 @@ fetch('./connection.json', {credentials:'same-origin',cache:'no-store'}).then(r=
   if(downloads.desktop) document.querySelector('#download-desktop').href = downloads.desktop;
   if(downloads.plugin) document.querySelector('#download-plugin').href = downloads.plugin;
   showDownloads(tabs.find(tab=>tab.getAttribute('aria-selected')==='true').dataset.client);
-  if(config?.hosted && config.endpoint){document.querySelector('#endpoint').value=config.endpoint;document.querySelector('#endpoint-note').textContent='This server’s connector address. Continue in your assistant to choose a school and sign in.';}
+  const endpoint = config?.hosted === true ? hostedEndpoint(config.endpoint) : null;
+  if(!endpoint) return;
+  document.querySelector('#endpoint').value = endpoint.href;
+  document.querySelector('#hosted-status').textContent = 'This deployment provides a hosted connector. Review its operator and permissions before connecting.';
+  document.querySelector('#endpoint-note').textContent = 'This server’s connector address. Continue in your assistant to choose a school and sign in.';
+  if(config.auth_mode === 'builtbyaadi') {
+    hostedMode = 'builtbyaadi';
+    const available = config.account_setup_available === true;
+    const link = document.querySelector('#hosted-account-link');
+    link.href = endpoint.origin + (available ? '/setup' : '/account/login');
+    link.textContent = available ? 'Set up your Built by Aadi account' : 'Sign in to an existing account';
+    link.hidden = false;
+    document.querySelector('#hosted-account-note').hidden = false;
+    document.querySelector('#hosted-account-note').textContent = available
+      ? 'Sign in or create an account, read the beta notice, then connect your own Canvas account. Your assistant receives its own revocable connection, never your Canvas token.'
+      : 'New account setup is not available yet. Existing users can sign in; everyone can use the local setup without a Built by Aadi account.';
+    document.querySelector('#hosted-status').textContent = available
+      ? 'Built by Aadi hosted beta. Read the beta notice and consider local setup before connecting your Canvas account.'
+      : 'New Built by Aadi account setup is not available yet. Local setup remains available.';
+    document.querySelector('#endpoint-note').textContent = 'Use this address in your assistant, then sign in to Built by Aadi to review access. Never paste a Canvas token into your assistant’s connector URL.';
+    document.querySelector('#release-note').textContent = 'Free and open source. Personal setup available. Built by Aadi hosting is in beta.';
+    choose(tabs.find(tab => tab.getAttribute('aria-selected') === 'true'));
+  }
 }).catch(()=>{});

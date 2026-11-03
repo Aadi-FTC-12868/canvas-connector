@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import html
 import json
+import re
 import threading
 import time
 import uuid
 from typing import Any
-from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qsl, urlencode
+from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qsl, urlencode, quote, quote_plus
 
 from bs4 import BeautifulSoup
 from canvas_py._errors import CanvasError
@@ -20,6 +22,91 @@ _HTML_FIELDS = {"body", "description", "message", "syllabus_body", "instructions
 _TOOL_NAMES = {"planner_items": "canvas_planner", "list_inbox": "canvas_inbox",
                "get_assignment": "canvas_get_assignment", "get_my_submission": "canvas_get_submission",
                "get_file": "canvas_get_file", "get_inbox_thread": "canvas_inbox_thread"}
+
+
+class SecretRedactor:
+    """Remove known request credentials, not guessed private course content.
+
+    Real Canvas credentials are long. Short synthetic/operator values are only
+    removed as complete values (or complete Bearer values), avoiding changes to
+    ordinary words such as 'secretary'. URL/HTML/JSON forms are finite known
+    representations; this does not claim to detect every possible encoding.
+    """
+    def __init__(self, values=()):
+        long, short = set(), set()
+        for value in values:
+            if not isinstance(value, str) or not value:
+                continue
+            escaped_html = html.escape(value, quote=True)
+            forms = {value, quote(value, safe=""), quote_plus(value, safe=""), escaped_html,
+                     escaped_html.replace("&#x27;", "&#39;")}
+            forms.update(re.sub(r"%[0-9A-F]{2}", lambda match: match[0].lower(), form) for form in tuple(forms))
+            forms.update(json.dumps(form, ensure_ascii=True)[1:-1] for form in tuple(forms))
+            (long if len(value) >= 16 else short).update(forms)
+        self.long = tuple(sorted(long, key=lambda value: (-len(value), value)))
+        self.short = frozenset(short)
+        self.pattern = self._compile(self.long)
+        serialized = set(self.long)
+        serialized.update(json.dumps(value, ensure_ascii=ascii_only)[1:-1]
+                          for value in self.long for ascii_only in (False, True))
+        self.serialized_pattern = self._compile(sorted(serialized, key=lambda value: (-len(value), value)))
+        self.marker = "[redacted]"
+        index = 0
+        while self.marker in self.short or any(value in self.marker for value in self.long):
+            index += 1
+            self.marker = f"[removed:{index}]"
+
+    @staticmethod
+    def _compile(forms):
+        patterns = []
+        for form in forms:
+            # Percent hex is case insensitive, while the credential's ordinary
+            # letters remain case sensitive. Mixed-case encodings are valid.
+            parts = re.split(r"(%[0-9A-Fa-f]{2})", form)
+            patterns.append("".join(f"(?i:{part})" if re.fullmatch(r"%[0-9A-Fa-f]{2}", part)
+                                    else re.escape(part) for part in parts))
+        return re.compile("|".join(patterns)) if patterns else None
+
+    def text(self, value: str) -> str:
+        if value in self.short:
+            return self.marker
+        if value.startswith("Bearer ") and value[7:] in self.short:
+            return "Bearer " + self.marker
+        return self.pattern.sub(lambda match: self.marker, value) if self.pattern else value
+
+    def redact(self, value: Any) -> Any:
+        if isinstance(value, str):
+            return self.text(value)
+        if isinstance(value, dict):
+            result = {}
+            for key, item in value.items():
+                public_key = self.text(key) if isinstance(key, str) else key
+                # Redacting two keys must not silently discard either value.
+                candidate, ordinal = public_key, 1
+                while candidate in result:
+                    ordinal += 1
+                    candidate = f"{public_key} [{ordinal}]"
+                result[candidate] = self.redact(item)
+            return result
+        if isinstance(value, list):
+            return [self.redact(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self.redact(item) for item in value)
+        return value
+
+    def contains_serialized(self, value: str) -> bool:
+        # Inspect the complete stored serialization before taking any window.
+        # JSON escaping can hide the literal secret, including across windows.
+        if not self.long and not self.short:
+            return False
+        if self.serialized_pattern and self.serialized_pattern.search(value):
+            return True
+        if self.short:
+            for form in self.short:
+                for candidate in (form, "Bearer " + form):
+                    if any(json.dumps(candidate, ensure_ascii=ascii_only) in value for ascii_only in (False, True)):
+                        return True
+        return False
 
 
 def dump(value: Any) -> Any:
@@ -213,13 +300,17 @@ class ResponseStore:
         return envelope(status="result_too_large", coverage={"complete": False},
             errors=[{"code": "result_too_large", "message": "Narrow the request or reduce list/document limits; result was not presented as complete."}])
 
-    def read(self, owner: str, result_id: str, offset: int = 0, max_chars: int = 40000) -> dict:
+    def read(self, owner: str, result_id: str, offset: int = 0, max_chars: int = 40000, *, secret_values=()) -> dict:
         if type(offset) is not int or type(max_chars) is not int or offset < 0 or not 1 <= max_chars <= 40000:
             raise ValueError("offset must be nonnegative; max_chars must be 1..40000")
         with self.lock:
             r = (self.persistence.get("response", result_id) if self.persistence is not None else self.records.get(result_id))
             if not r or r["owner"] != owner or r["expires"] <= time.time():
                 raise ValueError("Result continuation expired or is unavailable for this account; repeat the source read")
+            if SecretRedactor(secret_values).contains_serialized(r["text"]):
+                # Old records may predate redaction. Refuse the complete record,
+                # rather than changing text/hash/offsets in an existing cursor.
+                raise ValueError("Result continuation contains protected credential data; repeat the source read")
             total = len(r["text"])
             if offset > total:
                 raise ValueError("offset exceeds result length")

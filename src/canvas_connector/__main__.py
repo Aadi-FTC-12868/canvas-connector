@@ -68,7 +68,7 @@ def main() -> None:
         check = provider_from_env()
         check.store.close()
     except Exception:
-        parser.error("Invalid hosted configuration. Check CONNECTOR_PUBLIC_URL, CONNECTOR_DATABASE, CONNECTOR_ENCRYPTION_KEY, CONNECTOR_INSTITUTIONS_FILE and CONNECTOR_TRUSTED_PROXIES.")
+        parser.error("Invalid hosted configuration. Check CONNECTOR_AUTH_MODE, CONNECTOR_PUBLIC_URL, CONNECTOR_DATABASE, CONNECTOR_ENCRYPTION_KEY, the mode's onboarding settings and CONNECTOR_TRUSTED_PROXIES.")
     uvicorn.run("canvas_connector.__main__:create_app_from_env", factory=True,
                 host=args.host, port=args.port, workers=args.workers,
                 access_log=False, proxy_headers=bool(trusted_proxies),
@@ -77,14 +77,40 @@ def main() -> None:
 
 def provider_from_env():
     from .auth import CanvasOAuthProvider, Institution
-    required = ("CONNECTOR_PUBLIC_URL", "CONNECTOR_DATABASE", "CONNECTOR_ENCRYPTION_KEY", "CONNECTOR_INSTITUTIONS_FILE")
+    mode = os.environ.get("CONNECTOR_AUTH_MODE", "institution")
+    if mode not in {"institution", "builtbyaadi"}:
+        raise ValueError("Unknown hosted authentication mode")
+    required = ("CONNECTOR_PUBLIC_URL", "CONNECTOR_DATABASE", "CONNECTOR_ENCRYPTION_KEY")
     if any(not os.environ.get(name) for name in required):
         raise ValueError("Missing hosted configuration")
+    common = {
+        "issuer_url": os.environ["CONNECTOR_PUBLIC_URL"],
+        "database_path": os.environ["CONNECTOR_DATABASE"],
+        "encryption_key": os.environ["CONNECTOR_ENCRYPTION_KEY"],
+    }
+    if mode == "builtbyaadi":
+        if common["database_path"] != "cloudflare://store":
+            raise ValueError("Built by Aadi hosting requires the Cloudflare durable store")
+        from .edge import validate_edge_secret
+        validate_edge_secret(os.environ.get("CONNECTOR_EDGE_SECRET"))
+        if os.environ["CONNECTOR_EDGE_SECRET"] == common["encryption_key"]:
+            raise ValueError("Gateway and record-encryption secrets must be different")
+        from .broker import BuiltByAadiProvider
+        # The mailer is opt-in. Without it, account creation and email-based
+        # recovery are unavailable; no verification code is returned to users.
+        mail_mode = os.environ.get("CONNECTOR_ACCOUNT_MAIL", "disabled")
+        if mail_mode not in {"disabled", "cloudflare"}:
+            raise ValueError("Unknown account mail transport")
+        mailer = None
+        if mail_mode == "cloudflare":
+            from .cloudflare_mail import CloudflareMailer
+            mailer = CloudflareMailer()
+        return BuiltByAadiProvider(**common, mailer=mailer)
+    if not os.environ.get("CONNECTOR_INSTITUTIONS_FILE"):
+        raise ValueError("Institution mode requires institution configuration")
     institution_data = json.loads(Path(os.environ["CONNECTOR_INSTITUTIONS_FILE"]).read_text())
     return CanvasOAuthProvider(
-        issuer_url=os.environ["CONNECTOR_PUBLIC_URL"],
-        database_path=os.environ["CONNECTOR_DATABASE"],
-        encryption_key=os.environ["CONNECTOR_ENCRYPTION_KEY"],
+        **common,
         institutions=[Institution(**entry) for entry in institution_data],
     )
 
@@ -92,7 +118,9 @@ def provider_from_env():
 def create_app_from_env():
     """Uvicorn worker factory; each process owns its database connection."""
     from .server import create_http_app
-    return create_http_app(provider_from_env())
+    provider = provider_from_env()
+    edge_secret = os.environ.get("CONNECTOR_EDGE_SECRET") if os.environ.get("CONNECTOR_AUTH_MODE") == "builtbyaadi" else None
+    return create_http_app(provider, edge_secret=edge_secret)
 
 
 if __name__ == "__main__":

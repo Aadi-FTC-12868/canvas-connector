@@ -38,7 +38,7 @@ Both catalogs use `./` to select the repository root. UV resolves `canvas-py` an
 
 ## Packaged personal downloads
 
-The source release can build two local artifacts. Both are for the user's own account. They do not provide a public hosted Canvas sign-in or automatically connect cloud/mobile sessions. The separate personal tunnel setup can connect ChatGPT through the running local adapter. Institutions can restrict API access; hosted multi-user onboarding still needs institution-authorized OAuth.
+The source release can build two local artifacts. Both are for the user's own account. They do not provide a public hosted Canvas sign-in or automatically connect cloud/mobile sessions. The separate personal tunnel setup can connect ChatGPT through the running local adapter. Institutions can restrict API access; the experimental hosted account mode and the institution OAuth mode have distinct setup and policy boundaries described below.
 
 | Artifact | Install path | Runtime and account setup |
 | --- | --- | --- |
@@ -76,7 +76,14 @@ The website offers the source download and runner command in its ChatGPT tab. Th
 
 ## Authentication contract
 
-There are two independent sign-ins: the AI client authorizes this connector; this connector authorizes access to the user's institution's Canvas. Canvas credentials are never MCP bearer credentials. Hosted onboarding requires an institution-enabled Canvas developer key; see [DEPLOYMENT.md](DEPLOYMENT.md).
+The AI client authorizes this connector independently of upstream Canvas access.
+Canvas credentials are never MCP bearer credentials. Institution-mode onboarding
+requires an institution-enabled Canvas developer key; see [DEPLOYMENT.md](DEPLOYMENT.md).
+The experimental Built by Aadi mode instead uses verified email/password accounts,
+a per-user Canvas credential vault and separate assistant consent. It is not a
+live or institution-approved hosted service; its deployment and policy constraints
+are recorded in [HOSTED-BUILTBYAADI.md](HOSTED-BUILTBYAADI.md). Neither implementation
+by itself establishes successful sign-in in every assistant client.
 
 The MCP side publishes protected-resource metadata and authorization-server metadata. Authorization uses PKCE S256, with the MCP resource bound to the resulting grant. DCR is supported by ChatGPT and Claude. CIMD is another client-registration mechanism, but should only be advertised by a server that implements its metadata fetching and validation. Our implementation's supported mechanisms are listed in the deployment guide. [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
 

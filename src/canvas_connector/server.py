@@ -199,7 +199,9 @@ class RequestLimitsMiddleware:
                 headers = list(message.get("headers", []))
                 headers.extend([
                     (b"x-content-type-options", b"nosniff"),
-                    (b"referrer-policy", b"no-referrer"),
+                    # Browser form POSTs need a same-origin Origin header for
+                    # CSRF checks. no-referrer can turn that header into null.
+                    (b"referrer-policy", b"same-origin"),
                     (b"x-frame-options", b"DENY"),
                     (b"cache-control", b"no-store"),
                 ])
@@ -219,11 +221,12 @@ def create_stdio_server(*, allow_writes: bool = False, canvas: Canvas | None = N
             raise PermissionError("Writes are disabled. Start stdio with --allow-writes to enable actions.")
 
     owner = hashlib.sha256((client.config.base_url + "\0" + client.config.token).encode()).hexdigest()
-    register_tools(server, lambda: client, authorize, owner=lambda: owner)
+    register_tools(server, lambda: client, authorize, owner=lambda: owner,
+                   secret_values=lambda: (client.config.token,))
     return server
 
 
-def create_http_app(provider: Any):
+def create_http_app(provider: Any, *, edge_secret: str | None = None):
     origin = provider.resource_url.removesuffix("/mcp")
     hostname = urlsplit(origin).hostname
     authority = urlsplit(origin).netloc
@@ -240,14 +243,17 @@ def create_http_app(provider: Any):
     register_tools(server, lambda: current_principal().canvas, _authorize_write,
                    owner=lambda: current_principal().grant_id,
                    store=ActionStore(bind_credentials=False, persistence=provider.store),
-                   responses=ResponseStore(persistence=provider.store))
+                   responses=ResponseStore(persistence=provider.store),
+                   secret_values=lambda: (current_principal().canvas.config.token,))
     app = server.streamable_http_app()
 
     async def health(request):
         return JSONResponse({"status": "ok", "service": "canvas-connector", "canvas_authenticated": False})
 
     async def connection_config(request):
-        return JSONResponse({"endpoint": provider.resource_url, "hosted": True})
+        return JSONResponse({"endpoint": provider.resource_url, "hosted": True,
+                             "auth_mode": getattr(provider, "public_auth_mode", "institution"),
+                             "account_setup_available": bool(getattr(provider, "account_setup_available", False))})
 
     # Put static catchall last so it cannot shadow OAuth or MCP routes.
     app.routes[0:0] = provider.routes()
@@ -258,4 +264,7 @@ def create_http_app(provider: Any):
     app.add_middleware(AccountContextMiddleware, provider=provider)
     app.add_middleware(RequestLimitsMiddleware, resource_url=provider.resource_url, provider=provider)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=[hostname])
+    if edge_secret is not None:
+        from .edge import CloudflareEdgeMiddleware
+        app.add_middleware(CloudflareEdgeMiddleware, secret=edge_secret)
     return app
