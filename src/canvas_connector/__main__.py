@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import ipaddress
 import json
 import os
+import sys
 from pathlib import Path
 
 
@@ -52,6 +54,8 @@ def main() -> None:
     hosted.add_argument("--port", default=8000, type=int)
     hosted.add_argument("--workers", default=1, type=int, choices=range(1, 9), help="Worker processes sharing the configured database (1..8)")
     commands.add_parser("keygen", help="Generate a private encryption key; store it securely")
+    commands.add_parser("owner-init", help="Provision the sole owner of a personal server interactively")
+    commands.add_parser("owner-reset-password", help="Recover the personal owner password and revoke all sessions/apps")
     args = parser.parse_args()
     if args.command == "keygen":
         from cryptography.fernet import Fernet
@@ -61,6 +65,14 @@ def main() -> None:
         from .server import create_stdio_server
         create_stdio_server(allow_writes=args.allow_writes).run(transport="stdio")
         return
+    if args.command in {"owner-init", "owner-reset-password"}:
+        try:
+            configure_personal_owner(reset=args.command == "owner-reset-password")
+        except (Exception, KeyboardInterrupt):
+            parser.error("Owner configuration failed. Use a private terminal, personal mode, and the configured encrypted database. Initialization requires an empty store; recovery requires an existing owner.")
+        return
+    if os.environ.get("CONNECTOR_AUTH_MODE") == "personal" and args.workers != 1:
+        parser.error("Personal hosting uses one worker so all apps share its upstream request limit.")
     import uvicorn
     try:
         # Validate before spawning so invalid secret configuration fails once.
@@ -78,7 +90,7 @@ def main() -> None:
 def provider_from_env():
     from .auth import CanvasOAuthProvider, Institution
     mode = os.environ.get("CONNECTOR_AUTH_MODE", "institution")
-    if mode not in {"institution", "builtbyaadi"}:
+    if mode not in {"institution", "builtbyaadi", "personal"}:
         raise ValueError("Unknown hosted authentication mode")
     required = ("CONNECTOR_PUBLIC_URL", "CONNECTOR_DATABASE", "CONNECTOR_ENCRYPTION_KEY")
     if any(not os.environ.get(name) for name in required):
@@ -88,13 +100,15 @@ def provider_from_env():
         "database_path": os.environ["CONNECTOR_DATABASE"],
         "encryption_key": os.environ["CONNECTOR_ENCRYPTION_KEY"],
     }
+    if mode == "personal":
+        if common["database_path"] == "cloudflare://store":
+            _validate_cloudflare_secrets(common["encryption_key"])
+        from .personal import PersonalProvider
+        return PersonalProvider(**common)
     if mode == "builtbyaadi":
         if common["database_path"] != "cloudflare://store":
             raise ValueError("Built by Aadi hosting requires the Cloudflare durable store")
-        from .edge import validate_edge_secret
-        validate_edge_secret(os.environ.get("CONNECTOR_EDGE_SECRET"))
-        if os.environ["CONNECTOR_EDGE_SECRET"] == common["encryption_key"]:
-            raise ValueError("Gateway and record-encryption secrets must be different")
+        _validate_cloudflare_secrets(common["encryption_key"])
         from .broker import BuiltByAadiProvider
         # The mailer is opt-in. Without it, account creation and email-based
         # recovery are unavailable; no verification code is returned to users.
@@ -119,8 +133,45 @@ def create_app_from_env():
     """Uvicorn worker factory; each process owns its database connection."""
     from .server import create_http_app
     provider = provider_from_env()
-    edge_secret = os.environ.get("CONNECTOR_EDGE_SECRET") if os.environ.get("CONNECTOR_AUTH_MODE") == "builtbyaadi" else None
+    edge_secret = os.environ.get("CONNECTOR_EDGE_SECRET") if (
+        os.environ.get("CONNECTOR_AUTH_MODE") == "builtbyaadi" or
+        (os.environ.get("CONNECTOR_AUTH_MODE") == "personal" and
+         os.environ.get("CONNECTOR_DATABASE") == "cloudflare://store")) else None
     return create_http_app(provider, edge_secret=edge_secret)
+
+
+def _validate_cloudflare_secrets(encryption_key):
+    from .edge import validate_edge_secret
+    validate_edge_secret(os.environ.get("CONNECTOR_EDGE_SECRET"))
+    if os.environ["CONNECTOR_EDGE_SECRET"] == encryption_key:
+        raise ValueError("Gateway and record-encryption secrets must be different")
+
+
+def configure_personal_owner(*, reset: bool = False):
+    """Operator-only interactive bootstrap; credentials never appear in argv."""
+    if os.environ.get("CONNECTOR_AUTH_MODE") != "personal":
+        raise ValueError("Owner commands require personal mode")
+    if not sys.stdin.isatty() or not sys.stderr.isatty():
+        raise ValueError("Owner commands require a private interactive terminal")
+    from .storage import open_store
+    from .personal_admin import initialize_owner, reset_owner_password
+    database, key = os.environ.get("CONNECTOR_DATABASE"), os.environ.get("CONNECTOR_ENCRYPTION_KEY")
+    if not database or not key:
+        raise ValueError("Missing encrypted store configuration")
+    email = input("Owner email address (used only for sign-in; no email is sent): ").strip() if not reset else None
+    password = getpass.getpass("New owner password (at least 12 characters): ")
+    if password != getpass.getpass("Confirm owner password: "):
+        raise ValueError("Passwords did not match")
+    store = open_store(database, key)
+    try:
+        if reset:
+            reset_owner_password(store, password)
+        else:
+            initialize_owner(store, email, password)
+    finally:
+        store.close()
+    print("Owner password reset; previous sessions and assistant connections are revoked." if reset else
+          "Personal owner provisioned. Start the server and sign in to connect your Canvas account.")
 
 
 if __name__ == "__main__":

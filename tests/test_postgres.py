@@ -38,6 +38,52 @@ def pg():
             connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(namespace)))
 
 
+@pytest.mark.parametrize("state", ["record", "expired_record", "lease", "tombstone"])
+def test_postgres_is_empty_counts_raw_application_state(pg, state):
+    store, _, _, _ = pg
+    assert store.is_empty()
+    with store.transaction():
+        assert store.is_empty()
+        if state in {"record", "expired_record"}:
+            store.put("unrecognized_application_kind", "key", {},
+                      expires=store.now() + (-1 if state == "expired_record" else 60))
+        elif state == "lease":
+            assert store.acquire_lease("work", "key")
+        else:
+            store.revoke_owner("owner")
+        assert not store.is_empty()
+    assert not store.is_empty()
+
+
+def test_postgres_is_empty_observes_rollback_and_ignores_revisions(pg):
+    store, _, _, _ = pg
+    with pytest.raises(ValueError), store.transaction():
+        store.put("row", "key", {}, expires=store.now() + 60)
+        assert not store.is_empty()
+        raise ValueError("rollback")
+    assert store.is_empty()
+    store.put("row", "key", {}, expires=store.now() + 60)
+    store.delete("row", "key")
+    assert store.is_empty()
+
+
+def test_postgres_is_empty_uses_only_its_namespace(pg):
+    import psycopg
+    from psycopg import sql
+    from canvas_connector.postgres import PostgresStore
+    store, dsn, key, _ = pg
+    namespace = "test_" + uuid.uuid4().hex
+    other = PostgresStore(dsn, key, namespace=namespace)
+    try:
+        other.put("owner", "singleton", {}, expires=other.now() + 60)
+        assert not other.is_empty()
+        assert store.is_empty()
+    finally:
+        other.close()
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(namespace)))
+
+
 def test_postgres_contract_encryption_cas_rollback_and_revocation(pg):
     from mcp.server.auth.provider import TokenError
     store, dsn, key, namespace = pg

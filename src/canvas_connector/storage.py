@@ -117,6 +117,20 @@ class Store:
         """Atomic read/modify/write section; nested sections use savepoints."""
         return _Transaction(self)
 
+    def is_empty(self) -> bool:
+        """Whether no raw application state exists in this storage namespace.
+
+        Records, leases and revocation tombstones count, including expired rows
+        not yet purged. Backend schema/revision metadata does not. Backends with
+        staged writes also count pending application state conservatively. Hold
+        transaction() around this check and initialization to prevent a race.
+        """
+        with self.transaction():
+            return bool(self.db.execute(
+                "SELECT NOT (EXISTS(SELECT 1 FROM records) OR "
+                "EXISTS(SELECT 1 FROM leases) OR EXISTS(SELECT 1 FROM revoked_owners))"
+            ).fetchone()[0])
+
     def _encoded(self, value: dict[str, Any]) -> bytes:
         if not isinstance(value, dict):
             raise TypeError("Stored values must be objects")

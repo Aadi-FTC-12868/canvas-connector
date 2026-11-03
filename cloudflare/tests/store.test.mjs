@@ -19,6 +19,24 @@ function blob(engine, tx, text = "A".repeat(200)) {
   return id;
 }
 
+test("is_empty requires a live transaction and counts pending application state", () => {
+  let now = Date.now(); const storage = sqliteStorage(); const engine = new StoreEngine(storage, () => now);
+  const tx = token();
+  assert.throws(() => engine.handle({op: "is_empty", tx}), /transaction_expired/);
+  engine.handle({op: "begin", tx});
+  assert.deepEqual(engine.handle({op: "is_empty", tx}), {empty: true});
+  engine.handle({op: "blob_start", tx, id: token(), size: 1, count: 1});
+  assert.deepEqual(engine.handle({op: "is_empty", tx}), {empty: false});
+  engine.handle({op: "abort", tx});
+  const next = token(); engine.handle({op: "begin", tx: next});
+  assert.deepEqual(engine.handle({op: "is_empty", tx: next}), {empty: true});
+  engine.handle({op: "delete", tx: next, category: "record", namespace: "test", key: hash("absent")});
+  assert.deepEqual(engine.handle({op: "is_empty", tx: next}), {empty: false});
+  now += 61000;
+  assert.throws(() => engine.handle({op: "is_empty", tx: next}), /transaction_expired/);
+  storage.db.close();
+});
+
 test("committed data remains invisible until single SQLite commit", () => {
   const storage = sqliteStorage(); const engine = new StoreEngine(storage); const tx = token();
   engine.handle({op: "begin", tx}); const id = blob(engine, tx);
@@ -106,12 +124,16 @@ test("actual workerd Durable Object commits chunked records and persists restart
   };
   try {
     const tx = token(), id = token(), content = "A".repeat(3 * 1024 * 1024);
-    await rpc({op: "begin", tx}); await rpc({op: "blob_start", tx, id, size: content.length, count: content.length / 131072});
+    await rpc({op: "begin", tx});
+    assert.deepEqual(await rpc({op: "is_empty", tx}), {empty: true});
+    await rpc({op: "blob_start", tx, id, size: content.length, count: content.length / 131072});
+    assert.deepEqual(await rpc({op: "is_empty", tx}), {empty: false});
     for (let index = 0; index < content.length / 131072; index++) await rpc({op: "blob_chunk", tx, id, index, data: content.slice(index * 131072, (index + 1) * 131072)});
     await rpc({op: "write", tx, ...row("a", id)}); await rpc({op: "commit", tx});
     await mf.dispose(); mf = new Miniflare(options);
     assert.equal((await rpc({op: "status", tx})).state, "committed");
     const next = token(); await rpc({op: "begin", tx: next});
+    assert.deepEqual(await rpc({op: "is_empty", tx: next}), {empty: false});
     assert.equal((await rpc({op: "get", tx: next, category: "record", namespace: "test", key: hash("a")})).row.blob, id);
     assert.equal((await rpc({op: "blob_read", tx: next, id, index: 23})).data.length, 131072);
     await rpc({op: "commit", tx: next});

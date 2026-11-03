@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import multiprocessing as mp
+import threading
 import time
 
 from cryptography.fernet import Fernet
@@ -14,6 +16,62 @@ from canvas_connector.storage import OwnerRevokedError, Store
 
 def make_store(tmp_path):
     return Store(tmp_path / "shared.db", Fernet.generate_key())
+
+
+@pytest.mark.parametrize("state", ["record", "expired_record", "lease", "tombstone"])
+def test_is_empty_counts_every_kind_of_raw_application_state(tmp_path, state):
+    store = make_store(tmp_path)
+    try:
+        assert store.is_empty()
+        with store.transaction():
+            assert store.is_empty()
+            if state in {"record", "expired_record"}:
+                store.put("unrecognized_application_kind", "key", {},
+                          expires=time.time() + (-1 if state == "expired_record" else 60))
+            elif state == "lease":
+                assert store.acquire_lease("work", "key")
+            else:
+                store.revoke_owner("owner")
+            assert not store.is_empty()
+        assert not store.is_empty()
+    finally:
+        store.close()
+
+
+def test_is_empty_observes_rollback_and_ignores_revision_metadata(tmp_path):
+    store = make_store(tmp_path)
+    try:
+        with pytest.raises(ValueError), store.transaction():
+            store.put("row", "key", {}, expires=time.time() + 60)
+            assert not store.is_empty()
+            raise ValueError("rollback")
+        assert store.is_empty()
+        store.put("row", "key", {}, expires=time.time() + 60)
+        store.delete("row", "key")
+        assert store.is_empty()
+    finally:
+        store.close()
+
+
+def test_is_empty_and_initialization_share_atomic_transaction(tmp_path):
+    key = Fernet.generate_key()
+    stores = [Store(tmp_path / "bootstrap.db", key) for _ in range(2)]
+    ready = threading.Barrier(2)
+
+    def initialize(store):
+        ready.wait(timeout=5)
+        with store.transaction():
+            if not store.is_empty():
+                return False
+            store.put("owner", "singleton", {}, expires=time.time() + 60)
+            return True
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            assert sorted(pool.map(initialize, stores)) == [False, True]
+    finally:
+        for store in stores:
+            store.close()
 
 
 def test_nested_transactions_rollback_and_versioned_updates(tmp_path):

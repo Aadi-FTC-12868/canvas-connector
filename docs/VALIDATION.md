@@ -1,5 +1,38 @@
 # Validation record
 
+## Unreleased personal hosted mode
+
+The owner-only branch passed 4,191 local Python tests with 19 PostgreSQL cases
+skipped without a local database. The MCP contract remains 87 tools, 93 action
+kinds, and 34 execution groups. Twelve Worker tests include the fresh-store
+initialization guard on an actual local workerd Durable Object.
+
+An isolated real Chrome browser passed operator provisioning, owner login,
+Canvas setup, two assistant OAuth/PKCE connections, an authenticated MCP read,
+default write denial, OAuth cancellation, and individual revocation while the
+other assistant remained authorized. Public signup, verification, password reset,
+and deletion GET/POST routes returned 404. Layouts at 390px and 1440px had no
+horizontal overflow or console errors. All accounts, Canvas responses, and
+callbacks were synthetic; no real Canvas calls or emails were made.
+
+The personal workload benchmark passed 1,000/1,000 measured MCP calls with one
+owner and five separate grants. Four 250-call phases used concurrency 1, 4, 8,
+and 16. With a synthetic 20ms upstream delay, local macOS/arm64 throughput was
+23.17, 99.56, 120.44, and 114.25 calls/second, respectively; p95 latency was
+101.28, 90.11, 145.53, and 270.75ms, excluding client-side queue wait. Each phase
+made 312 upstream GETs; peak simultaneous upstream requests were 1, 4, 4, and 4.
+The measured workload was half profile reads, one-quarter paginated navigation,
+and one-quarter stored continuation windows. Five oversized results were fully
+reconstructed before measurement. Write denial, continuation isolation, a bounded
+read retry after a throttle, and per-app revocation also passed. Worker peak RSS
+was about 104 MiB. This excludes real TLS/DNS latency, document extraction,
+actual Canvas quota, VPS resource limits, and native assistant installation.
+
+The one-worker Linux configuration, owner bootstrap/recovery commands, and HTTPS
+reverse-proxy example are prepared. No server, billing subscription, DNS, public
+personal endpoint, or real assistant connection has been deployed by this change.
+See [the personal deployment guide](PERSONAL-HOSTED.md).
+
 ## Unreleased Built by Aadi account beta
 
 The account/Cloudflare branch is locally implemented and under review, separate

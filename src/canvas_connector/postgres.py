@@ -80,7 +80,6 @@ class PostgresStore(Store):
     def __init__(self, dsn: str, encryption_key: str | bytes, *, capacity: int = 20000,
                  namespace: str = "canvas_connector"):
         try:
-            import psycopg
             from psycopg import sql
         except ImportError:
             raise RuntimeError("Install canvas-connector[postgres] to use PostgreSQL storage") from None
@@ -134,6 +133,14 @@ class PostgresStore(Store):
 
     def transaction(self):
         return _PostgresTransaction(self)
+
+    def is_empty(self) -> bool:
+        """Check raw application state under the namespace transaction lock."""
+        with self.transaction():
+            return bool(self.connection.execute(
+                "SELECT NOT (EXISTS(SELECT 1 FROM records) OR "
+                "EXISTS(SELECT 1 FROM leases) OR EXISTS(SELECT 1 FROM revoked_owners))"
+            ).fetchone()[0])
 
     def now(self) -> float:
         with self.lock:

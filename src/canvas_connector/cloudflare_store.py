@@ -87,6 +87,14 @@ class CloudflareStore(Store):
     def transaction(self):
         return _CloudflareTransaction(self)
 
+    def is_empty(self) -> bool:
+        """Check raw and staged application state while holding a fenced lease."""
+        with self.transaction():
+            empty = self._rpc("is_empty").get("empty")
+            if type(empty) is not bool:
+                raise CloudflareStorageError("Invalid durable storage response")
+            return empty
+
     def _rpc(self, op: str, **values) -> dict:
         if self._tx is None:
             raise CloudflareStorageError("Storage transaction is unavailable")
