@@ -43,6 +43,15 @@ Never place a token in a chat or public configuration.
 This JSON format applies to clients accepting `mcpServers`; Codex uses its own
 MCP configuration or `codex mcp add`. See the [client guide](docs/COMPATIBILITY.md).
 
+## Personal hosted connection for multiple assistant apps
+
+The unreleased personal mode serves one owner's Canvas account over OAuth-protected
+Streamable HTTP. Each app has its own revocable grant. It has no public signup or
+email dependency, and accepts the operator's own Canvas URL and token after a
+private owner login. See [personal hosting](docs/PERSONAL-HOSTED.md) for provisioning,
+deployment, supported client setup, and frequent-call limits. Hosting remains an
+operator task; this repository is not itself a running service.
+
 ## Personal ChatGPT connection
 
 If your OpenAI account can create/use Secure MCP Tunnels and add custom MCP

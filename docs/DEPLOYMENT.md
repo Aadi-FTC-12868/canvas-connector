@@ -1,7 +1,9 @@
 # Run the connector
 
-The connector supports personal local stdio and an OAuth-protected institution
-service. The experimental Built by Aadi account mode has a separate
+The connector supports personal local stdio, an OAuth-protected institution
+service, and an unreleased [personal hosted mode](PERSONAL-HOSTED.md) for one
+operator's own Canvas account with separate assistant grants. The experimental
+Built by Aadi account mode has a separate
 [Cloudflare deployment plan](HOSTED-BUILTBYAADI.md). The institution instructions
 below use SQLite on one host or PostgreSQL across hosts; those databases are not
 the Cloudflare Container persistence design. Configuration files do not establish

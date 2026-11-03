@@ -22,7 +22,7 @@ def test_default_institution_mode_keeps_its_explicit_config_requirement(configur
         provider_from_env()
 
 
-@pytest.mark.parametrize("mode", ["", "personal", "built-by-aadi", "unknown"])
+@pytest.mark.parametrize("mode", ["", "personal-hosted", "built-by-aadi", "unknown"])
 def test_unknown_modes_do_not_silently_select_personal_token_hosting(configured, mode):
     configured.setenv("CONNECTOR_AUTH_MODE", mode)
     with pytest.raises(ValueError, match="Unknown hosted authentication mode"):

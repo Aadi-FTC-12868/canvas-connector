@@ -1,0 +1,22 @@
+# Linux single-host reference. Host networking keeps the backend on loopback
+# and makes the native HTTPS reverse proxy's exact peer address unambiguous.
+services:
+  connector:
+    build: .
+    restart: unless-stopped
+    network_mode: host
+    command: [canvas-connector, serve, --host, '127.0.0.1', --port, '8000', --workers, '1']
+    environment:
+      CONNECTOR_AUTH_MODE: personal
+      CONNECTOR_PUBLIC_URL: ${CONNECTOR_PUBLIC_URL:?Set the public HTTPS origin}
+      CONNECTOR_ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY:?Set a persistent encryption key}
+      CONNECTOR_DATABASE: /data/personal.sqlite3
+      CONNECTOR_TRUSTED_PROXIES: '127.0.0.1,::1'
+    volumes:
+      - personal-data:/data
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ['no-new-privileges:true']
+    cap_drop: [ALL]
+volumes:
+  personal-data:

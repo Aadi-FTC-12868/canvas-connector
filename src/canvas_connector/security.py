@@ -70,22 +70,27 @@ class PublicNetworkBackend(SyncBackend):
         raise httpx.ConnectError("Unix sockets are unavailable in hosted mode")
 
 
-def secure_http_client(*, base_url: str = "", timeout: float = 30) -> httpx.Client:
+def secure_http_client(*, base_url: str = "", timeout: float = 30, request_gate=None) -> httpx.Client:
     # httpx 0.28/httpcore 1.x adapter; covered by a construction test.
     transport = httpx.HTTPTransport(retries=0)
     transport._pool._network_backend = PublicNetworkBackend()
+    if request_gate is not None:
+        transport = request_gate.wrap(transport)
     return httpx.Client(base_url=base_url, transport=transport, trust_env=False,
                         follow_redirects=False, timeout=timeout,
                         event_hooks={"request": [lambda req: validate_public_url(str(req.url))]})
 
 
-def guarded_canvas(config):
+def guarded_canvas(config, *, request_gate=None):
     from canvas_py import Canvas
-    client = secure_http_client(base_url=config.api_base)
+    client = (secure_http_client(base_url=config.api_base) if request_gate is None else
+              secure_http_client(base_url=config.api_base, request_gate=request_gate))
     canvas = Canvas(config, http_client=client)
     # The injected client is created solely for this Canvas instance.
     canvas._http._owns_client = True
     # Multipart storage transfers deliberately use an anonymous client. Guard
     # that separate transport too, including same-origin Canvas upload targets.
-    canvas._http._anonymous_client_factory = secure_http_client
+    canvas._http._anonymous_client_factory = (
+        secure_http_client if request_gate is None else
+        lambda **kwargs: secure_http_client(request_gate=request_gate, **kwargs))
     return canvas

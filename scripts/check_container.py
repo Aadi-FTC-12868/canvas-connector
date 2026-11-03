@@ -17,6 +17,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", default="canvas-connector:verify")
     parser.add_argument("--context")
+    parser.add_argument("--mode", choices=["institution", "personal"], default="institution")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*", args.image):
         parser.error("Expected a Docker image reference")
@@ -31,6 +32,7 @@ def main():
         folder = Path(directory)
         env = folder / "private.env"
         env.write_text("\n".join([
+            "CONNECTOR_AUTH_MODE=" + args.mode,
             "CONNECTOR_PUBLIC_URL=https://connector.example",
             "CONNECTOR_DATABASE=/data/connector.db",
             "CONNECTOR_ENCRYPTION_KEY=" + Fernet.generate_key().decode(),
@@ -46,11 +48,23 @@ def main():
         (folder / ".dockerignore").write_text("*\n!Dockerfile\n!institutions.json\n")
         try:
             run("build", "--network", "none", "-t", test_image, str(folder), timeout=90)
+            command = ["canvas-connector", "serve", "--host", "127.0.0.1", "--port", "8000", "--workers", "2"]
+            if args.mode == "personal":
+                # Synthetic operator bootstrap only. Production initialization
+                # is an explicit interactive command, never a startup action.
+                bootstrap = '''import os
+from canvas_connector.storage import open_store
+from canvas_connector.personal_admin import initialize_owner
+store=open_store(os.environ['CONNECTOR_DATABASE'],os.environ['CONNECTOR_ENCRYPTION_KEY'])
+initialize_owner(store,'owner@example.test','Synthetic-container-password!')
+store.close()
+os.execvp('canvas-connector',['canvas-connector','serve','--host','127.0.0.1','--port','8000','--workers','1'])
+'''
+                command = ["python", "-c", bootstrap]
             run("create", "--name", name, "--network", "none", "--read-only",
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
                 "--tmpfs", "/tmp", "--tmpfs", "/data:uid=10001,gid=10001,mode=700",
-                "--env-file", str(env), test_image, "canvas-connector", "serve",
-                "--host", "127.0.0.1", "--port", "8000", "--workers", "2")
+                "--env-file", str(env), test_image, *command)
             run("start", name)
             probe = '''import json, os, urllib.request, urllib.error
 def fetch(path):
@@ -71,8 +85,13 @@ for pid in os.listdir('/proc'):
         with open('/proc/'+pid+'/cmdline','rb') as handle: command=handle.read()
         if b'multiprocessing.spawn' in command and b'--multiprocessing-fork' in command: workers+=1
     except (OSError,PermissionError): pass
-assert workers==2
-print(json.dumps({'health':200,'unauthenticated_mcp':401,'oauth_discovery':True,'nonroot':True,'workers':2,'external_network':'disabled'}))
+personal=os.environ.get('CONNECTOR_AUTH_MODE')=='personal'
+assert workers==(0 if personal else 2)
+if personal:
+    assert fetch('/account/signup')[0]==404
+    assert fetch('/account/reset')[0]==404
+    assert fetch('/connection.json')[1]['auth_mode']=='personal'
+print(json.dumps({'health':200,'unauthenticated_mcp':401,'oauth_discovery':True,'nonroot':True,'workers':1 if personal else 2,'external_network':'disabled','mode':'personal' if personal else 'institution'}))
 '''
             deadline = time.monotonic() + 60
             while True:

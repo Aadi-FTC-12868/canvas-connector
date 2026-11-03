@@ -288,6 +288,7 @@ class BuiltByAadiProvider(CanvasOAuthProvider):
             if (not current_session or current_session["auth_version"] != session["auth_version"]
                     or self._connection_version(session["account_id"]) != expected_version):
                 raise AccountError("Your connection changed. Reload setup before trying again.")
+            self._check_canvas_identity(session["account_id"], origin, user_id)
             self._revoke_account_grants(session["account_id"])
             connection = {"id": secrets.token_urlsafe(24), "version": secrets.token_urlsafe(24),
                 "account_id": session["account_id"], "origin": origin, "token": token,
@@ -296,6 +297,13 @@ class BuiltByAadiProvider(CanvasOAuthProvider):
                 expires=time.time() + ACCOUNT_SECONDS, owner="account:" + session["account_id"])
             self.store.put("canvas_connection_epoch", session["account_id"], {"version": connection["version"]},
                 expires=time.time() + ACCOUNT_SECONDS, owner="account:" + session["account_id"])
+
+    def _check_canvas_identity(self, account_id, origin, user_id):
+        """Credential policy hook inside the atomic connection replacement."""
+
+    def _check_setup_acknowledgement(self, form):
+        if form.get("acknowledge") != "yes":
+            raise AccountError("Read and acknowledge the beta notice before continuing.")
 
     def disconnect(self, session_token):
         with self.store.transaction():
@@ -349,8 +357,7 @@ class BuiltByAadiProvider(CanvasOAuthProvider):
             self._check_form(request, form, "setup", session=session)
             operation = form.get("operation")
             if operation == "save":
-                if form.get("acknowledge") != "yes":
-                    raise AccountError("Read and acknowledge the beta notice before continuing.")
+                self._check_setup_acknowledgement(form)
                 self.save_connection(request.cookies[self.session_cookie], form.get("origin", ""),
                                      form.get("token", ""), form.get("connection_version", ""))
             elif operation == "disconnect":

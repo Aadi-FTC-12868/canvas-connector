@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import threading
 import time
 
 from cryptography.fernet import Fernet
@@ -84,6 +85,74 @@ def store(bridge, key):
 
 def put(store, key="one", value=None, **kwargs):
     store.put("test", key, value or {"value": key}, expires=time.time() + 600, **kwargs)
+
+
+def test_is_empty_ignores_transaction_and_revision_bookkeeping(store):
+    assert store.is_empty()
+    with store.transaction():
+        assert store.is_empty()
+    assert store.is_empty()
+    put(store)
+    assert not store.is_empty()
+    store.delete("test", "one")
+    assert store.is_empty()
+
+
+@pytest.mark.parametrize("state", ["record", "expired_record", "lease", "tombstone", "upload"])
+def test_is_empty_detects_uncommitted_application_state(store, state):
+    with pytest.raises(ValueError), store.transaction():
+        assert store.is_empty()
+        if state in {"record", "expired_record"}:
+            store.put("unknown_application_kind", "key", {},
+                      expires=time.time() + (-1 if state == "expired_record" else 60))
+        elif state == "lease":
+            assert store.acquire_lease("work", "key")
+        elif state == "tombstone":
+            store.revoke_owner("owner")
+        else:
+            store._blob(store._encoded({"pending": True}))
+        assert not store.is_empty()
+        raise ValueError("rollback")
+    assert store.is_empty()
+
+
+def test_is_empty_fails_closed_when_transaction_expires(store, bridge):
+    with pytest.raises(CloudflareStorageError), store.transaction():
+        bridge.advance(61_000)
+        store.is_empty()
+
+
+def test_is_empty_requires_boolean_response(bridge, key):
+    def handle(request):
+        if json.loads(request.content)["op"] == "is_empty":
+            return httpx.Response(200, json={"empty": "true"})
+        return bridge.handle(request)
+    store = CloudflareStore(key, transport=httpx.MockTransport(handle))
+    try:
+        with pytest.raises(CloudflareStorageError):
+            store.is_empty()
+    finally:
+        store.close()
+
+
+def test_is_empty_and_initialization_are_atomic_between_clients(bridge, key):
+    stores = [CloudflareStore(key, transport=httpx.MockTransport(bridge.handle)) for _ in range(2)]
+    ready = threading.Barrier(2)
+
+    def initialize(store):
+        ready.wait(timeout=5)
+        with store.transaction():
+            if not store.is_empty():
+                return False
+            put(store, "owner")
+            return True
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            assert sorted(pool.map(initialize, stores)) == [False, True]
+    finally:
+        for store in stores:
+            store.close()
 
 
 def test_private_transport_encryption_and_restart(store, bridge, key):

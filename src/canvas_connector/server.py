@@ -80,6 +80,10 @@ class AccountContextMiddleware:
 
     def __init__(self, app: Any, provider: Any):
         self.app, self.provider = app, provider
+        self.request_gate = None
+        if getattr(provider, "public_auth_mode", None) == "personal":
+            from .traffic import RequestGate
+            self.request_gate = RequestGate()
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] != "http" or scope["path"].rstrip("/") != "/mcp":
@@ -96,7 +100,8 @@ class AccountContextMiddleware:
         try:
             config = await self.provider.get_credentials(access)
             from .security import guarded_canvas
-            canvas = guarded_canvas(config)
+            canvas = (guarded_canvas(config, request_gate=self.request_gate)
+                      if self.request_gate is not None else guarded_canvas(config))
         except Exception:
             response = JSONResponse(
                 {"error": "canvas_connection_unavailable", "message": "Reconnect your Canvas account and try again."},

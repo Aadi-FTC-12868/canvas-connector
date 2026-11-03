@@ -16,6 +16,13 @@ Sources: [ChatGPT custom servers](https://developers.openai.com/api/docs/guides/
 
 ## Install the personal plugin from GitHub
 
+For one private HTTPS endpoint shared across assistant apps, use the unreleased
+[personal hosted mode](PERSONAL-HOSTED.md). The endpoint follows the remote OAuth
+rows above. Duet can use connectors connected to the Claude account, but its
+actual connection must be verified after deployment; a local plugin install does
+not prove Duet access. No public account signup or email service is needed for
+this owner-only mode.
+
 Install [UV](https://docs.astral.sh/uv/getting-started/installation/), Git, and the relevant assistant CLI first. The public [source repository](https://github.com/Aadi-FTC-12868/canvas-connector) contains both marketplace catalogs and the complete plugin at its root. No ZIP extraction is needed for this route.
 
 Codex:

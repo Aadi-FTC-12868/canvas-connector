@@ -130,6 +130,13 @@ export class StoreEngine {
         return {state: existing?.state === "committed" ? "committed" : "aborted"};
       }
       const current = this.active(tx);
+      if (op === "is_empty") {
+        // Ignore transaction outcomes/revisions, but count all raw application
+        // state, including staged deletions and uploads not yet attached to a
+        // record. A fresh-store initializer must not overlook pending work.
+        const {empty} = this.first("SELECT NOT (EXISTS(SELECT 1 FROM entities) OR EXISTS(SELECT 1 FROM staged) OR EXISTS(SELECT 1 FROM blobs) OR EXISTS(SELECT 1 FROM chunks)) AS empty");
+        return {empty: Boolean(empty)};
+      }
       if (op === "savepoint") return {seq: current.seq};
       if (op === "rollback") {
         requireValue(Number.isInteger(input.seq) && input.seq >= 0 && input.seq <= current.seq);

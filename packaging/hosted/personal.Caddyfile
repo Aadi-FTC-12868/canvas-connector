@@ -1,0 +1,5 @@
+# Native Caddy on the same Linux host as compose.personal.yaml.
+# Set the operator's real domain before starting. Do not enable access logs.
+canvas.example.org {
+    reverse_proxy 127.0.0.1:8000
+}

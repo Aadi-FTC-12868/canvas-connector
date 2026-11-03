@@ -13,12 +13,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
 ROOT_FILES = {"README.md", "AGENTS.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md", "pyproject.toml",
-              ".gitignore", ".dockerignore", ".env.example", "Dockerfile", "compose.yaml", "compose.postgres.yaml", "requirements.lock", "requirements-runtime.lock"}
+              ".gitignore", ".dockerignore", ".env.example", "Dockerfile", "compose.yaml", "compose.postgres.yaml", "compose.personal.yaml", "requirements.lock", "requirements-runtime.lock"}
 PLUGIN_FILES = {"plugin.json", "mcp.json", "mcp.codex.json", ".mcp.json",
                 ".agents/plugins/marketplace.json", ".codex-plugin/plugin.json",
                 ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"}
 HOSTED_FILES = {"packaging/hosted/builtbyaadi.env.example",
-                "packaging/hosted/builtbyaadi.Caddyfile", "packaging/hosted/canvas-connector.service"}
+                "packaging/hosted/builtbyaadi.Caddyfile", "packaging/hosted/personal.Caddyfile", "packaging/hosted/canvas-connector.service"}
 CLOUDFLARE_FILES = {"cloudflare/package.json", "cloudflare/package-lock.json",
                     "cloudflare/tsconfig.json", "cloudflare/wrangler.jsonc",
                     "cloudflare/README.md", "cloudflare/vitest.config.ts"}

@@ -49,8 +49,11 @@ jobs:
       - name: Verify Cloudflare storage and gateway
         run: npm test --prefix cloudflare
       - run: python scripts/benchmark_hosted.py --database postgres --workers 2 --concurrency 32 --requests 1000 --output dist/benchmark-postgres.json
+      - name: Verify personal multi-app workload
+        run: python scripts/benchmark_personal.py --requests 1000 --output dist/benchmark-personal.json
       - run: docker build -t canvas-connector:verify .
       - run: python scripts/check_container.py
+      - run: python scripts/check_container.py --mode personal
       - uses: actions/upload-artifact@v4
         with:
           name: canvas-connector-distributions
